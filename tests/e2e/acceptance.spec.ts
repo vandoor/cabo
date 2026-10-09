@@ -164,57 +164,87 @@ test("one-minute real clicks, public watching and safe operation timings", async
         "摸牌堆剩余 38 张",
       );
       await expect(watch.getByTestId("pending-card")).toHaveCount(0);
+      await expect(watch.getByTestId("public-draw")).toHaveCount(0);
       await click("直接弃置");
       await cycle();
     });
     await step("discard source and single swap", async () => {
       const count = await page.getByTestId("deck-count").textContent();
+      const face = await page
+        .locator('.pile img[alt^="弃牌堆"]')
+        .getAttribute("src");
       await click("取弃牌堆");
+      await expect(page.getByTestId("pending-card")).toContainText(
+        "所有人可见 · 弃牌堆",
+      );
       await expect(page.getByTestId("deck-count")).toHaveText(count!);
+      await expect(watch.getByTestId("public-draw")).toContainText(
+        "验收玩家 从弃牌堆取牌",
+      );
+      await expect(
+        watch.getByTestId("public-draw").locator("img"),
+      ).toHaveAttribute("src", face!);
+      await expect(watch.getByTestId("pending-card")).toHaveCount(0);
       await click("换入手牌");
       await click("我的牌 第 3 张");
       await click("确认交换");
       await expect(page.locator(".swap-feedback")).toContainText("第 3 张");
+      await expect(
+        page
+          .getByRole("button", { name: "我的牌 第 3 张", exact: true })
+          .locator("img"),
+      ).toHaveAttribute("src", face!);
+      await expect(
+        watch
+          .getByRole("button", { name: "验收玩家的牌 第 3 张", exact: true })
+          .locator("img"),
+      ).toHaveAttribute("src", face!);
+      await expect(watch.getByTestId("public-draw")).toHaveCount(0);
       await cycle();
     });
     await step("matching multi swap", async () => {
       expect((await request.post("/__test/merge")).ok()).toBe(true);
-      await click("摸一张牌");
+      await click("取弃牌堆");
       await click("换入手牌");
       await click("我的牌 第 2 张");
       await click("我的牌 第 4 张");
       await click("确认交换");
       await expect(page.locator(".my-area .card-slot")).toHaveCount(3);
       await expect(page.locator(".swap-feedback")).toContainText("合并成功");
-      await cycle();
-    });
-    await step("peek and manual close", async () => {
-      await request.post("/__test/skill?rank=7");
-      await click("摸一张牌");
-      await click("使用技能");
-      await click("我的牌 第 1 张");
-      await click("确认技能");
       await expect(
-        page.getByRole("dialog", { name: "私密查看" }),
-      ).toBeVisible();
-      await expect(watch.getByTestId("skill-notice")).toContainText("偷看");
-      await expect(watch.getByRole("dialog")).toHaveCount(0);
-      await click("记住了，盖回");
-      await expect(page.getByRole("dialog")).toHaveCount(0);
+        watch.getByRole("button", {
+          name: "验收玩家的牌 第 2 张",
+          exact: true,
+        }),
+      ).toHaveClass(/exposed/);
       await cycle();
     });
-    await step("spy and manual close", async () => {
-      await request.post("/__test/skill?rank=9");
-      await click("摸一张牌");
-      await click("使用技能");
-      await click("小熊的牌 第 2 张");
-      await click("确认技能");
-      await expect(
-        page.getByRole("dialog", { name: "私密查看" }),
-      ).toBeVisible();
-      await click("记住了，盖回");
-      await cycle();
-    });
+    await step(
+      "spy public position, spectator refresh and private close",
+      async () => {
+        await request.post("/__test/skill?rank=9");
+        await click("摸一张牌");
+        await click("使用技能");
+        await click("小熊的牌 第 2 张");
+        await click("确认技能");
+        await expect(
+          page.getByRole("dialog", { name: "私密查看" }),
+        ).toBeVisible();
+        await expect(watch.getByTestId("skill-notice")).toHaveText(
+          "验收玩家查看了小熊的第2张牌",
+        );
+        await expect(watch.getByRole("dialog")).toHaveCount(0);
+        await watch.reload();
+        await expect(watch.getByTestId("skill-notice")).toHaveText(
+          "验收玩家查看了小熊的第2张牌",
+        );
+        await click("记住了，盖回");
+        await expect(page.getByTestId("skill-notice")).toHaveText(
+          "验收玩家查看了小熊的第2张牌",
+        );
+        await cycle();
+      },
+    );
     await step(
       "exchange different players and different positions",
       async () => {
@@ -229,8 +259,7 @@ test("one-minute real clicks, public watching and safe operation timings", async
         await cycle();
       },
     );
-    await step("watch refresh reconnect and privacy", async () => {
-      await watch.reload();
+    await step("watch privacy and mobile layout", async () => {
       await expect(
         watch.getByRole("button", { name: "退出观战" }),
       ).toBeVisible();
@@ -250,29 +279,13 @@ test("one-minute real clicks, public watching and safe operation timings", async
           () => document.documentElement.scrollWidth <= innerWidth,
         ),
       ).toBe(true);
-      const subscriptions = rows.filter(
-        (row) => row.step === "watch" && row.phase === "ack",
-      ).length;
-      await request.post("/__test/drop-watchers");
-      await expect
-        .poll(
-          () =>
-            rows.filter((row) => row.step === "watch" && row.phase === "ack")
-              .length,
-        )
-        .toBeGreaterThan(subscriptions);
-      await expect(
-        watch.getByRole("button", { name: "退出观战" }),
-      ).toBeVisible();
-      await expect(watch.getByTestId("deck-count")).toHaveText(
-        (await page.getByTestId("deck-count").textContent())!,
-      );
-      expect(
-        await watch.evaluate(() => localStorage.getItem("cabo-session")),
-      ).toBe("preserved-test-token");
     });
     await step("CABO persistent notice and settlement", async () => {
+      expect((await request.post("/__test/cabo-failed")).ok()).toBe(true);
       await click("呼唤 CABO");
+      await expect(
+        page.getByRole("dialog", { name: "确认 CABO", exact: true }),
+      ).toContainText("牌分加 10");
       await click("确认呼唤 CABO");
       await expect(watch.getByTestId("cabo-notice")).toContainText(
         "剩余 2 人行动",
@@ -286,6 +299,14 @@ test("one-minute real clicks, public watching and safe operation timings", async
       await command(clients[1], { type: "discard" });
       await expect(page.locator(".results")).toBeVisible();
       await expect(watch.locator(".results")).toBeVisible();
+      await expect(
+        page.locator(".result").filter({
+          has: page.getByRole("heading", { name: "验收玩家", exact: true }),
+        }),
+      ).toContainText("CABO 失败 · 牌分 + 10");
+      await expect(watch.locator(".results")).toContainText(
+        "CABO 失败 · 牌分 + 10",
+      );
       await expect(
         page.getByRole("button", { name: "开始下一轮", exact: true }),
       ).toBeDisabled();

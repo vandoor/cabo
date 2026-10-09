@@ -80,4 +80,20 @@ app.app.post("/__test/merge", (_req, res) => {
   }
   res.json({ ok: true });
 });
+// Arrange an unambiguously failed caller using existing cards only.
+app.app.post("/__test/cabo-failed", (_req, res) => {
+  const s = app.room.engine?.state;
+  if (!s || s.phase !== "turn" || s.pending) return res.sendStatus(409);
+  const pool = [
+    ...s.deck,
+    ...s.players.flatMap((p) => p.hand.map((h) => h.card)),
+  ].sort((a, b) => a.rank - b.rank);
+  for (const [i, player] of s.players.entries()) {
+    if (i === s.turnIndex) continue;
+    for (const hand of player.hand) hand.card = pool.shift()!;
+  }
+  for (const hand of s.players[s.turnIndex].hand) hand.card = pool.pop()!;
+  s.deck = pool;
+  res.json({ ok: true });
+});
 app.http.listen(3100, "127.0.0.1");

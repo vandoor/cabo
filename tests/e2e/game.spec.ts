@@ -245,7 +245,7 @@ test("spy, independent-position exchange, game over and a clean restart", async 
     "小熊 · 第 2 张",
   );
   await expect(other.getByTestId("skill-notice")).toHaveText(
-    "小鹿 发动了间谍技能",
+    "小鹿查看了小熊的第2张牌",
   );
   await page.getByRole("button", { name: "记住了，盖回" }).click();
   await request.post("/__test/skill?rank=11");

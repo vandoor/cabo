@@ -394,15 +394,15 @@ describe("rounds and scoring", () => {
     expect(g.state.phase).toBe("roundEnd");
     expect(g.state.results?.find((r) => r.playerId === id)?.round).toBe(0);
   });
-  it("doubles unsuccessful caller score", () => {
+  it("adds ten to unsuccessful caller score (23 becomes 33)", () => {
     const g = active();
     const id = current(g);
-    setHand(g, id, [6]);
+    setHand(g, id, [11, 12]);
     setHand(g, id === "0" ? "1" : "0", [5]);
     g.apply(id, { type: "cabo" }, 10);
     g.apply(current(g), { type: "draw", source: "discard" }, 11);
     g.apply(current(g), { type: "discard" }, 12);
-    expect(g.state.results?.find((r) => r.playerId === id)?.round).toBe(12);
+    expect(g.state.results?.find((r) => r.playerId === id)?.round).toBe(33);
   });
   it("last draw completes action before settling even during CABO", () => {
     const g = active();
@@ -816,10 +816,122 @@ describe("public skill announcements", () => {
           at: 11,
           skill: { actorId: actor, kind },
         });
-        expect(Object.keys(notice!.skill!).sort()).toEqual(["actorId", "kind"]);
+        expect(Object.keys(notice!.skill!).sort()).toEqual(
+          kind === "spy"
+            ? ["actorId", "index", "kind", "targetId"]
+            : ["actorId", "kind"],
+        );
+        if (kind === "spy")
+          expect(notice!.skill).toMatchObject({ targetId: other, index: 0 });
         if (player.id !== actor)
           expect(g.view(player.id, 11).reveal).toBeUndefined();
       }
+    },
+  );
+});
+
+describe("public discard cards", () => {
+  it("publishes discard draw independently of private pending and clones its face", () => {
+    const g = active();
+    const actor = current(g);
+    g.state.discard.push(face(6, "hearts"));
+    g.apply(actor, { type: "draw", source: "discard" }, 10);
+    for (const view of [
+      g.view(actor, 10),
+      g.view("1", 10),
+      g.spectatorView(20),
+    ]) {
+      expect(view.publicDraw).toEqual({
+        actorId: actor,
+        card: face(6, "hearts"),
+      });
+    }
+    const observer = g.spectatorView(20);
+    expect(observer.pending).toBeUndefined();
+    observer.publicDraw!.card.rank = 99;
+    expect(g.state.pending!.card.rank).toBe(6);
+    g.apply(actor, { type: "discard" }, 21);
+    expect(g.spectatorView(21).publicDraw).toBeUndefined();
+    g.apply(current(g), { type: "draw", source: "deck" }, 22);
+    expect(g.spectatorView(22).publicDraw).toBeUndefined();
+  });
+  it.each([
+    [[1, 2, 3], [1], 1],
+    [[4, 8, 4], [0, 2], 0],
+    [[4, 8, 5], [0, 2], 3],
+  ])(
+    "keeps incoming discard public through swap %j at %j",
+    (ranks, indices, position) => {
+      const g = active();
+      const actor = current(g);
+      setHand(g, actor, ranks as number[]);
+      g.state.discard.push(face(6));
+      g.apply(actor, { type: "draw", source: "discard" }, 10);
+      g.apply(actor, { type: "swap", indices: indices as number[] }, 11);
+      const view = g.spectatorView(12);
+      expect(
+        view.players.find((p) => p.id === actor)!.hand[position as number],
+      ).toEqual({ index: position, public: true, card: face(6) });
+      expect(view.publicDraw).toBeUndefined();
+    },
+  );
+  it("moves a discard-origin public card with J/Q and removes visibility when replaced", () => {
+    const g = active();
+    const actor = current(g),
+      other = g.state.players.find((p) => p.id !== actor)!.id;
+    g.state.discard.push(face(6));
+    g.apply(actor, { type: "draw", source: "discard" }, 10);
+    g.apply(actor, { type: "swap", indices: [1] }, 11);
+    g.state.deck.push(face(12));
+    g.apply(other, { type: "draw", source: "deck" }, 12);
+    g.apply(
+      other,
+      {
+        type: "exchange",
+        first: { playerId: actor, index: 1 },
+        second: { playerId: other, index: 2 },
+      },
+      13,
+    );
+    expect(
+      g.spectatorView(13).players.find((p) => p.id === other)!.hand[2],
+    ).toMatchObject({ public: true, card: face(6) });
+    g.apply(actor, { type: "draw", source: "deck" }, 14);
+    g.apply(actor, { type: "discard" }, 15);
+    g.apply(other, { type: "draw", source: "deck" }, 16);
+    g.apply(other, { type: "swap", indices: [2] }, 17);
+    expect(
+      g.spectatorView(17).players.find((p) => p.id === other)!.hand[2],
+    ).toEqual({ index: 2, public: false });
+    expect(g.spectatorView(17).discardTop).toEqual(face(6));
+  });
+});
+
+describe("CABO penalty boundaries", () => {
+  it.each([
+    [67, false, 50, true, "roundEnd"],
+    [67, true, 100, false, "roundEnd"],
+    [68, false, 101, false, "gameOver"],
+  ] as const)(
+    "applies plus ten before total %i with resetUsed %s",
+    (total, used, expected, reset, phase) => {
+      const g = active();
+      const actor = current(g);
+      setHand(g, actor, [11, 12]);
+      setHand(g, "1", [1]);
+      g.state.players[0].total = total;
+      g.state.players[0].resetUsed = used;
+      g.apply(actor, { type: "cabo" }, 10);
+      g.apply(current(g), { type: "draw", source: "discard" }, 11);
+      g.apply(current(g), { type: "discard" }, 12);
+      expect(g.state.results!.find((r) => r.playerId === actor)).toMatchObject({
+        raw: 23,
+        round: 33,
+        total: expected,
+        reset,
+        reason: "cabo-failed",
+      });
+      expect(g.state.phase).toBe(phase);
     },
   );
 });

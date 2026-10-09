@@ -73,8 +73,11 @@ export interface RoundResult {
     "normal" | "cabo-success" | "cabo-failed" | "special" | "special-opponent";
   reset: boolean;
 }
+export type SkillAnnouncement =
+  | { actorId: string; kind: "peek" | "exchange" }
+  | { actorId: string; kind: "spy"; targetId: string; index: number };
 export interface GameLog {
-  skill?: { actorId: string; kind: "peek" | "spy" | "exchange" };
+  skill?: SkillAnnouncement;
   id: number;
   at: number;
   text: string;
@@ -99,6 +102,7 @@ export interface PlayerView {
   reveal?: Reveal;
   swapFeedback?: SwapFeedback;
   pending?: { card: CardFace; source: "deck" | "discard" };
+  publicDraw?: { actorId: string; card: CardFace };
   discardTop?: CardFace;
   deckCount: number;
   caboCallerId?: string;

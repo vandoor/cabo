@@ -9,8 +9,9 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 async function fixture() {
+  let now = 1000;
   const app = createRoomServer({
-    now: () => 1000,
+    now: () => now,
     random: () => 0.31,
     tickInterval: 0,
   });
@@ -49,7 +50,15 @@ async function fixture() {
     expect(ack.view.role).toBe("spectator");
     return { socket, view: ack.view };
   };
-  return { app, connect, command, watch };
+  return {
+    app,
+    connect,
+    command,
+    watch,
+    setNow: (value: number) => {
+      now = value;
+    },
+  };
 }
 function publicOnly(view: Record<string, any>) {
   expect(view.role).toBe("spectator");
@@ -212,4 +221,86 @@ it("logs safe asynchronous timings for success, rejection, malformed requests an
     '"view"',
   ])
     expect(serialized).not.toContain(secret);
+});
+
+it("restores public spy position and discard draws without exposing private packets", async () => {
+  const f = await fixture();
+  const players = [await f.connect(), await f.connect()];
+  const sessions = [];
+  for (const [i, socket] of players.entries()) {
+    sessions.push(await socket.emitWithAck("join", { name: `玩家${i}` }));
+    await f.command(socket, { type: "ready", ready: true });
+  }
+  await f.command(players[0], { type: "start" });
+  for (const socket of players) {
+    await f.command(socket, { type: "initialSelect", indices: [0, 1] });
+    await f.command(socket, { type: "closeReveal" });
+  }
+  const engine = f.app.room.engine!;
+  const actorIndex = engine.state.turnIndex;
+  const actor = players[actorIndex],
+    other = players[1 - actorIndex];
+  const actorId = engine.state.players[actorIndex].id;
+  const otherId = engine.state.players[1 - actorIndex].id;
+  const watcher = await f.watch();
+  const packets: Record<string, any>[] = [];
+  watcher.socket.on("state", (view) => packets.push(view));
+  engine.state.deck.push({ rank: 9, suit: "hearts" });
+  await f.command(actor, { type: "draw", source: "deck" });
+  expect(
+    (await watcher.socket.emitWithAck("sync")).view.publicDraw,
+  ).toBeUndefined();
+  await f.command(actor, { type: "skill", targetId: otherId, index: 2 });
+  const original = (await watcher.socket.emitWithAck("sync")).view.logs.find(
+    (l: any) => l.skill,
+  );
+  expect(original).toMatchObject({
+    at: 1000,
+    skill: { actorId, kind: "spy", targetId: otherId, index: 2 },
+  });
+  expect(Object.keys(original.skill).sort()).toEqual([
+    "actorId",
+    "index",
+    "kind",
+    "targetId",
+  ]);
+  f.setNow(2000);
+  const reconnect = await f.connect();
+  const restored = await reconnect.emitWithAck("join", {
+    token: sessions[actorIndex].token,
+  });
+  expect(restored.view.reveal.deadline).toBe(6000);
+  expect(restored.view.logs.find((l: any) => l.skill)).toEqual(original);
+  const refreshedWatch = await f.watch();
+  expect(refreshedWatch.view.logs.find((l: any) => l.skill)).toEqual(original);
+  expect((await other.emitWithAck("sync")).view.reveal).toBeUndefined();
+  await f.command(reconnect, { type: "closeReveal" });
+  const discarded = engine.state.discard.at(-1);
+  await f.command(other, { type: "draw", source: "discard" });
+  for (const view of [
+    (await reconnect.emitWithAck("sync")).view,
+    (await watcher.socket.emitWithAck("sync")).view,
+    (await f.watch()).view,
+  ]) {
+    expect(view.publicDraw).toEqual({ actorId: otherId, card: discarded });
+    expect(view.pending).toBeUndefined();
+  }
+  await f.command(other, { type: "swap", indices: [1] });
+  const placed = (await watcher.socket.emitWithAck("sync")).view;
+  expect(placed.publicDraw).toBeUndefined();
+  expect(placed.players.find((p: any) => p.id === otherId).hand[1]).toEqual({
+    index: 1,
+    public: true,
+    card: discarded,
+  });
+  f.setNow(6000);
+  expect((await reconnect.emitWithAck("sync")).view.reveal).toBeUndefined();
+  expect((await f.watch()).view.logs.find((l: any) => l.skill).at + 5000).toBe(
+    6000,
+  );
+  packets.forEach(publicOnly);
+  await f.command(reconnect, { type: "endGame", confirm: true });
+  expect(
+    (await watcher.socket.emitWithAck("sync")).view.publicDraw,
+  ).toBeUndefined();
 });

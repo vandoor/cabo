@@ -22,7 +22,7 @@ function Icon({ name }: { name: string }) {
 const reason: Record<RoundResult["reason"], string> = {
   normal: "按手牌计分",
   "cabo-success": "CABO 成功 · 本轮 0 分",
-  "cabo-failed": "CABO 失败 · 牌分 × 2",
+  "cabo-failed": "CABO 失败 · 牌分 + 10",
   special: "神锋特工队 · 本轮 0 分",
   "special-opponent": "对手神锋 · 本轮 50 分",
 };
@@ -39,17 +39,18 @@ function Rules() {
         </p>
         <p>
           <b>少一点，再少一点</b>
-          多张同点数可换成一张；不同则全部公开，并追加摸到的牌。A=1，J=11，Q=12，K=13，大小王=0。
+          多张同点数可换成一张；不同则全部公开，并追加摸到的牌。弃牌堆取回的牌立即公开，换入手牌后保持明牌。A=1，J=11，Q=12，K=13，大小王=0。
         </p>
         <p>
-          <b>7 / 8 · 偷看</b>查看自己一张；<b>9 / 10 · 间谍</b>查看对手一张；
+          <b>7 / 8 · 偷看</b>查看自己一张；<b>9 / 10 · 间谍</b>
+          查看对手一张，公开目标位置；
           <b>J / Q · 交换</b>
           任意两名玩家各选一张交换，序号不限，也可交换两名对手的牌。技能只限摸牌堆，查看最多
           5 秒。
         </p>
         <p>
           <b>呼唤 CABO</b>抽牌前呼唤并结束回合，其他人各走一次。你并列最低得
-          0，否则牌分翻倍。摸牌堆抽尽也会结算。
+          0，否则牌分加 10。摸牌堆抽尽也会结算。
         </p>
         <p>
           <b>特殊计分</b>恰好 QQKK 得 0，其余人得 50。每人首次累计恰好 100 降至
@@ -84,7 +85,11 @@ export function App() {
     v?.phase !== "lobby"
       ? [...(v?.logs ?? [])]
           .reverse()
-          .find((log) => log.skill && log.skill.actorId !== v?.selfId)
+          .find(
+            (log) =>
+              log.skill &&
+              (log.skill.kind === "spy" || log.skill.actorId !== v?.selfId),
+          )
       : undefined;
   const skillActive = useDeadline(
     latestSkill ? latestSkill.at + 5000 : undefined,
@@ -274,7 +279,9 @@ export function App() {
           }
           skillMessage={
             skillNotice?.skill
-              ? `${v?.players.find((p) => p.id === skillNotice.skill!.actorId)?.name} 发动了${{ peek: "偷看", spy: "间谍", exchange: "交换" }[skillNotice.skill.kind]}技能`
+              ? skillNotice.skill.kind === "spy"
+                ? skillNotice.text
+                : `${v?.players.find((p) => p.id === skillNotice.skill!.actorId)?.name} 发动了${{ peek: "偷看", exchange: "交换" }[skillNotice.skill.kind]}技能`
               : undefined
           }
         />
@@ -629,6 +636,26 @@ export function App() {
                           <span>弃牌堆</span>
                         </div>
                       </div>
+                      {v.publicDraw && (
+                        <div
+                          className="public-draw"
+                          data-testid="public-draw"
+                          role="status"
+                        >
+                          <img
+                            src={faceUrl(v.publicDraw.card)}
+                            alt={`公开取牌 ${cardName(v.publicDraw.card)}`}
+                          />
+                          <span>
+                            {
+                              v.players.find(
+                                (p) => p.id === v.publicDraw!.actorId,
+                              )?.name
+                            }{" "}
+                            从弃牌堆取牌 · 公开
+                          </span>
+                        </div>
+                      )}
                       <p className="table-motto">留住低分，藏好秘密。</p>
                     </section>
                     {!spectator && (
@@ -746,10 +773,9 @@ export function App() {
                                 alt={`摸到 ${cardName(v.pending.card)}`}
                               />
                               <span>
-                                仅你可见 ·{" "}
                                 {v.pending.source === "deck"
-                                  ? "摸牌堆"
-                                  : "弃牌堆"}
+                                  ? "仅你可见 · 摸牌堆"
+                                  : "所有人可见 · 弃牌堆"}
                               </span>
                             </div>
                             <div className="pending-controls">
@@ -1006,7 +1032,7 @@ export function App() {
             </h2>
             <p>
               {confirm === "cabo"
-                ? "这会占用你的整个回合。其他玩家各行动一次后结算；并列最低得 0，否则你的牌分翻倍。"
+                ? "这会占用你的整个回合。其他玩家各行动一次后结算；并列最低得 0，否则你的牌分加 10。"
                 : "当前手牌和本场积分将清空，所有玩家返回大厅。"}
             </p>
             <div className="button-row">

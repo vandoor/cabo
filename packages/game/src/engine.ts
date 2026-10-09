@@ -248,7 +248,7 @@ export class GameEngine {
         reason = specials[i] ? "special" : "special-opponent";
       } else if (p.id === s.caboCallerId) {
         const success = raw[i] === Math.min(...raw);
-        round = success ? 0 : raw[i] * 2;
+        round = success ? 0 : raw[i] + 10;
         reason = success ? "cabo-success" : "cabo-failed";
       }
       p.total += round;
@@ -382,7 +382,8 @@ export class GameEngine {
     } else if (command.type === "swap") {
       requireRule(s.pending, "DRAW_REQUIRED", "请先摸牌");
       const indices = this.indices(command.indices, p.hand),
-        incoming = s.pending.card;
+        incoming = s.pending.card,
+        incomingPublic = s.pending.source === "discard";
       const success = indices.every(
         (i) => p.hand[i].card.rank === p.hand[indices[0]].card.rank,
       );
@@ -390,14 +391,14 @@ export class GameEngine {
         s.discard.push(...indices.map((i) => p.hand[i].card));
         p.hand = p.hand.flatMap((h, i) =>
           i === indices[0]
-            ? [{ card: incoming, public: false }]
+            ? [{ card: incoming, public: incomingPublic }]
             : indices.includes(i)
               ? []
               : [h],
         );
       } else {
         for (const i of indices) p.hand[i].public = true;
-        p.hand.push({ card: incoming, public: false });
+        p.hand.push({ card: incoming, public: incomingPublic });
       }
       p.swapFeedback = {
         outcome: success
@@ -451,10 +452,20 @@ export class GameEngine {
       s.discard.push(s.pending.card);
       delete s.pending;
       s.skillRevealPlayerId = p.id;
-      this.log(`${p.name} 发动了${rank <= 8 ? "偷看" : "间谍"}技能`, now, {
-        actorId: p.id,
-        kind: rank <= 8 ? "peek" : "spy",
-      });
+      this.log(
+        rank <= 8
+          ? `${p.name} 发动了偷看技能`
+          : `${p.name}查看了${target.name}的第${command.index + 1}张牌`,
+        now,
+        rank <= 8
+          ? { actorId: p.id, kind: "peek" }
+          : {
+              actorId: p.id,
+              kind: "spy",
+              targetId: target.id,
+              index: command.index,
+            },
+      );
     } else if (command.type === "exchange") {
       requireRule(
         s.pending && s.pending.source === "deck",
@@ -581,6 +592,11 @@ export class GameEngine {
         ...(log.skill ? { skill: { ...log.skill } } : {}),
       })),
     };
+    if (s.pending?.source === "discard")
+      result.publicDraw = {
+        actorId: s.pending.playerId,
+        card: { ...s.pending.card },
+      };
     if (s.discard.length)
       result.discardTop = { ...s.discard[s.discard.length - 1] };
     if (s.caboCallerId) {
