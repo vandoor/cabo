@@ -123,8 +123,13 @@ export class GameEngine {
     };
     this.startRound(now);
   }
-  private log(text: string, at: number) {
-    this.state.logs.push({ id: ++this.logSequence, at, text });
+  private log(text: string, at: number, skill?: GameLog["skill"]) {
+    this.state.logs.push({
+      id: ++this.logSequence,
+      at,
+      text,
+      ...(skill ? { skill } : {}),
+    });
     if (this.state.logs.length > 80) this.state.logs.shift();
   }
   private startRound(now: number) {
@@ -422,51 +427,79 @@ export class GameEngine {
         "INVALID_POSITION",
         "目标位置没有牌",
       );
-      if (rank >= 7 && rank <= 10) {
+      requireRule(
+        rank >= 7 && rank <= 10,
+        "NOT_SKILL_CARD",
+        "查看技能需要 7、8、9 或 10",
+      );
+      requireRule(
+        rank <= 8 ? target.id === p.id : target.id !== p.id,
+        "INVALID_TARGET",
+        rank <= 8 ? "这张牌只能查看自己的牌" : "这张牌只能查看其他玩家的牌",
+      );
+      p.reveal = {
+        cards: [
+          {
+            playerId: target.id,
+            index: command.index,
+            card: { ...target.hand[command.index].card },
+          },
+        ],
+        deadline: Math.min(now + 5000, s.turnDeadline!),
+      };
+      s.discard.push(s.pending.card);
+      delete s.pending;
+      s.skillRevealPlayerId = p.id;
+      this.log(`${p.name} 发动了${rank <= 8 ? "偷看" : "间谍"}技能`, now, {
+        actorId: p.id,
+        kind: rank <= 8 ? "peek" : "spy",
+      });
+    } else if (command.type === "exchange") {
+      requireRule(
+        s.pending && s.pending.source === "deck",
+        "SKILL_UNAVAILABLE",
+        "只有从牌堆摸到的功能牌能使用技能",
+      );
+      requireRule(
+        s.pending.card.rank === 11 || s.pending.card.rank === 12,
+        "NOT_SKILL_CARD",
+        "交换技能需要 J 或 Q",
+      );
+      const first = this.player(command.first.playerId);
+      const second = this.player(command.second.playerId);
+      requireRule(
+        first.id !== second.id,
+        "INVALID_TARGET",
+        "请选择两名不同玩家各一张牌",
+      );
+      for (const [player, position] of [
+        [first, command.first],
+        [second, command.second],
+      ] as const)
         requireRule(
-          rank <= 8 ? target.id === p.id : target.id !== p.id,
-          "INVALID_TARGET",
-          rank <= 8 ? "这张牌只能查看自己的牌" : "这张牌只能查看其他玩家的牌",
+          Number.isInteger(position.index) &&
+            position.index >= 0 &&
+            position.index < player.hand.length,
+          "INVALID_POSITION",
+          "目标位置没有牌",
         );
-        p.reveal = {
-          cards: [
-            {
-              playerId: target.id,
-              index: command.index,
-              card: { ...target.hand[command.index].card },
-            },
-          ],
-          deadline: Math.min(now + 5000, s.turnDeadline!),
-        };
-        s.discard.push(s.pending.card);
-        delete s.pending;
-        s.skillRevealPlayerId = p.id;
-        this.log(`${p.name} 使用查看技能`, now);
-      } else {
-        requireRule(
-          rank === 11 || rank === 12,
-          "NOT_SKILL_CARD",
-          "这张牌没有技能",
-        );
-        requireRule(
-          target.id !== p.id && command.index < p.hand.length,
-          "INVALID_TARGET",
-          "需要选择另一玩家且双方同一位置都有牌",
-        );
-        [p.hand[command.index], target.hand[command.index]] = [
-          target.hand[command.index],
-          p.hand[command.index],
-        ];
-        for (const player of [p, target])
-          if (player.swapFeedback?.index === command.index)
-            delete player.swapFeedback;
-        s.discard.push(s.pending.card);
-        this.log(
-          `${p.name} 与 ${target.name} 交换第 ${command.index + 1} 张牌`,
-          now,
-        );
-        this.finishTurn(now);
-      }
+      [first.hand[command.first.index], second.hand[command.second.index]] = [
+        second.hand[command.second.index],
+        first.hand[command.first.index],
+      ];
+      for (const [player, position] of [
+        [first, command.first],
+        [second, command.second],
+      ] as const)
+        if (player.swapFeedback?.index === position.index)
+          delete player.swapFeedback;
+      s.discard.push(s.pending.card);
+      this.log(
+        `${p.name} 交换了 ${first.name} 的第 ${command.first.index + 1} 张牌和 ${second.name} 的第 ${command.second.index + 1} 张牌`,
+        now,
+        { actorId: p.id, kind: "exchange" },
+      );
+      this.finishTurn(now);
     } else throw new RuleError("INVALID_COMMAND", "当前不能执行此操作");
     s.version++;
   }
@@ -544,7 +577,10 @@ export class GameEngine {
       })),
       round: s.round,
       deckCount: s.deck.length,
-      logs: s.logs.map((log) => ({ ...log })),
+      logs: s.logs.map((log) => ({
+        ...log,
+        ...(log.skill ? { skill: { ...log.skill } } : {}),
+      })),
     };
     if (s.phase === "initial")
       result.initial = {

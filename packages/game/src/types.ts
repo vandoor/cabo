@@ -5,6 +5,10 @@ export interface CardFace {
   suit: Suit;
 }
 export type Phase = "lobby" | "initial" | "turn" | "roundEnd" | "gameOver";
+export interface CardPosition {
+  playerId: string;
+  index: number;
+}
 export type GameCommand =
   | { type: "ready"; ready: boolean }
   | { type: "start" }
@@ -19,6 +23,7 @@ export type GameCommand =
   | { type: "discard" }
   | { type: "swap"; indices: number[] }
   | { type: "skill"; targetId: string; index: number }
+  | { type: "exchange"; first: CardPosition; second: CardPosition }
   | { type: "cabo" };
 export interface CommandEnvelope {
   requestId: string;
@@ -69,6 +74,7 @@ export interface RoundResult {
   reset: boolean;
 }
 export interface GameLog {
+  skill?: { actorId: string; kind: "peek" | "spy" | "exchange" };
   id: number;
   at: number;
   text: string;

@@ -44,6 +44,8 @@ app.app.post("/__test/skill", (req, res) => {
       s.deck[s.deck.length - 1],
       s.deck[index],
     ];
+  if (req.query.last === "true")
+    s.discard.push(...s.deck.splice(0, s.deck.length - 1));
   res.json({ ok: true });
 });
 app.app.post("/__test/final", (_req, res) => {

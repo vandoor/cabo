@@ -77,6 +77,10 @@ test("private skill overlay, failed multi-swap, numbered extra cards, responsive
   await page.getByRole("button", { name: "确认技能" }).click();
   await expect(page.getByRole("dialog", { name: "私密查看" })).toBeVisible();
   await expect(other.getByRole("dialog", { name: "私密查看" })).toHaveCount(0);
+  await expect(other.getByTestId("skill-notice")).toHaveText(
+    "小鹿 发动了偷看技能",
+  );
+  await expect(page.getByTestId("skill-notice")).toHaveCount(0);
   await page.getByRole("button", { name: "记住了，盖回" }).click();
   await other.getByRole("button", { name: "摸一张牌" }).click();
   await other.getByRole("button", { name: "换入手牌" }).click();
@@ -216,6 +220,7 @@ test("compacted merge highlights position two with reduced motion and clears whe
   await request.post("/__test/skill?rank=11");
   await other.getByRole("button", { name: "摸一张牌" }).click();
   await other.getByRole("button", { name: "使用技能" }).click();
+  await other.getByRole("button", { name: "我的牌 第 4 张" }).click();
   await other.getByRole("button", { name: "小鹿的牌 第 2 张" }).click();
   await expect(page.getByText("新换入", { exact: true })).toBeVisible();
   await other.getByRole("button", { name: "确认技能" }).click();
@@ -225,7 +230,7 @@ test("compacted merge highlights position two with reduced motion and clears whe
   await ctx.close();
 });
 
-test("spy, same-position exchange, game over and a clean restart", async ({
+test("spy, independent-position exchange, game over and a clean restart", async ({
   page,
   browser,
   request,
@@ -239,10 +244,14 @@ test("spy, same-position exchange, game over and a clean restart", async ({
   await expect(page.getByRole("dialog", { name: "私密查看" })).toContainText(
     "小熊 · 第 2 张",
   );
+  await expect(other.getByTestId("skill-notice")).toHaveText(
+    "小鹿 发动了间谍技能",
+  );
   await page.getByRole("button", { name: "记住了，盖回" }).click();
   await request.post("/__test/skill?rank=11");
   await other.getByRole("button", { name: "摸一张牌" }).click();
   await other.getByRole("button", { name: "使用技能" }).click();
+  await other.getByRole("button", { name: "我的牌 第 4 张" }).click();
   await other.getByRole("button", { name: "小鹿的牌 第 2 张" }).click();
   await other.getByRole("button", { name: "确认技能" }).click();
   await expect(page.getByRole("button", { name: "摸一张牌" })).toBeEnabled();

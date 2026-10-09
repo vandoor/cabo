@@ -1,5 +1,19 @@
 # 实施与验收记录
 
+## 任意位置交换与公开技能提示（2026-10-09）
+
+本轮按用户修正规则：J/Q 交换任意两名不同玩家各一张牌，包括自己与对手、两名对手，双方序号独立；下面历史验收中的“同位置”不再代表当前规则。其他玩家会看到 5 秒技能发动提示，不含被查看牌面；立即结算也保留提示至原截止时间。
+
+隔离目录：`/home/van/.config/superpowers/worktrees/cabo/any-card-exchange`，分支 `fix/any-card-exchange`。预览端口 3001，自动化测试端口 3100；构建产物仅写本目录的 `apps/web/dist` 与 `dist/server`。正式目录 `/home/van/github/cabo` 的 3000 服务不重启、不部署，本轮已记录其 67 个生产文件哈希用于复核。
+
+新增引擎/真实网络覆盖：J/Q 两种点数、不同玩家及位置、手牌数量不同、两名对手、公开状态随牌移动、暗牌过滤、被移动位置的提示清理、非法位置/玩家/旧消息拒绝，以及三种技能的公开提示。新增浏览器覆盖：三人独立身份、同一玩家改选/取消、两名对手、手机切换保留选牌、技能提示及到期、立即结算仍提示。既有双人 J/Q 场景改为独立位置，并覆盖 4 张手牌与 3 张手牌的交换。
+
+开发中发现并修正测试夹具的浏览器身份复用、桌面隐藏标签页定位；审查发现并修复立即结算时技能提示被隐藏。引擎/联网用例与公开提示用例分别保存失败起点于 `artifacts/exchange-red.log`、`artifacts/skill-notice-red.log`；结算提示修复前失败记录为 `artifacts/notice-settlement-red.log`。Chromium 桌面/手机新功能定向复测 4/4 通过，日志 `artifacts/exchange-targeted.log`。原始日志、截图、报告均只保留在本机。
+
+最终类型检查、生产构建及 Prettier 检查通过，规则/真实联网测试 73/73 通过。完整浏览器回归 31/32 通过（5.5 分钟），新增的两项场景在 Chromium/WebKit 桌面/手机共 8/8 通过；唯一失败为本轮之前已有的 Chromium 手机“断网后新换入提示到期”2800ms 超时，未改动该断言，也不能宣称全量通过。日志 `artifacts/exchange-e2e-final.log`，完整报告/失败 trace 备份在 `artifacts/exchange-full-results/`。本轮功能代码审查及结算提示修复复核通过。最后同步了操作标题“选择两名玩家各一张牌”，重新构建后 Chromium 桌面/手机选牌与提示用例 2/2 通过，日志 `artifacts/exchange-wording-final.log`。
+
+
+
 ## 当前目录运行验证（2026-10-09）
 
 项目现位于 `/home/van/github/cabo`，已建立 Git 仓库，远程为 `vandoor/cabo`。下文 2026-10-07 的目录、未提交状态和进程记录均为历史记录。

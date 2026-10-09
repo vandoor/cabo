@@ -347,6 +347,14 @@ function validEnvelope(value: unknown): value is CommandEnvelope {
         c.indices.length <= 52 &&
         c.indices.every(Number.isSafeInteger)
       );
+    case "exchange":
+      return [c.first, c.second].every(
+        (position) =>
+          position &&
+          typeof position === "object" &&
+          typeof position.playerId === "string" &&
+          Number.isSafeInteger(position.index),
+      );
     case "skill":
       return typeof c.targetId === "string" && Number.isSafeInteger(c.index);
     case "start":

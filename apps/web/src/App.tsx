@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type {
   CardFace,
+  CardPosition,
   GameCommand,
   PlayerSummary,
   RoundResult,
@@ -39,7 +40,9 @@ function Rules() {
         </p>
         <p>
           <b>7 / 8 · 偷看</b>查看自己一张；<b>9 / 10 · 间谍</b>查看对手一张；
-          <b>J / Q · 交换</b>双方同位置换牌。技能只限摸牌堆，查看最多 5 秒。
+          <b>J / Q · 交换</b>
+          任意两名玩家各选一张交换，序号不限，也可交换两名对手的牌。技能只限摸牌堆，查看最多
+          5 秒。
         </p>
         <p>
           <b>呼唤 CABO</b>抽牌前呼唤并结束回合，其他人各走一次。你并列最低得
@@ -66,6 +69,7 @@ export function App() {
   const [mode, setMode] = useState<"swap" | "skill" | undefined>();
   const [target, setTarget] = useState("");
   const [skillIndex, setSkillIndex] = useState<number>();
+  const [exchangeCards, setExchangeCards] = useState<CardPosition[]>([]);
   const [confirm, setConfirm] = useState<"cabo" | "endGame" | undefined>();
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 100);
@@ -100,6 +104,7 @@ export function App() {
     setSelected([]);
     setMode(undefined);
     setSkillIndex(undefined);
+    setExchangeCards([]);
     setTarget("");
     setConfirm(undefined);
   }, [v?.phase, v?.turnPlayerId, v?.round, !!v?.pending]);
@@ -116,6 +121,7 @@ export function App() {
       setMode(undefined);
       setSelected([]);
       setSkillIndex(undefined);
+      setExchangeCards([]);
       setConfirm(undefined);
     }
   };
@@ -143,29 +149,60 @@ export function App() {
   const rank = v?.pending?.card.rank ?? 0;
   const skillPossible =
     acting && v?.pending?.source === "deck" && rank >= 7 && rank <= 12;
+  const exchanging = mode === "skill" && (rank === 11 || rank === 12);
   const targetId = rank <= 8 ? v?.selfId : target;
+  const skillNotice =
+    v && v.phase !== "lobby"
+      ? [...v.logs]
+          .reverse()
+          .find(
+            (log) =>
+              log.skill &&
+              log.skill.actorId !== v.selfId &&
+              log.at + 5000 > serverNow,
+          )
+      : undefined;
+  const chooseExchange = (playerId: string, index: number) => {
+    setExchangeCards((cards) => {
+      const existing = cards.find((card) => card.playerId === playerId);
+      if (existing?.index === index)
+        return cards.filter((card) => card.playerId !== playerId);
+      if (existing)
+        return cards.map((card) =>
+          card.playerId === playerId ? { playerId, index } : card,
+        );
+      return cards.length < 2 ? [...cards, { playerId, index }] : cards;
+    });
+  };
   const beginSkill = () => {
     setMode("skill");
     setSelected([]);
     setSkillIndex(undefined);
+    setExchangeCards([]);
     setTarget(
       rank <= 8 ? v!.selfId : v!.players.find((p) => p.id !== v!.selfId)!.id,
     );
   };
   function hand(p: PlayerSummary, isMine = false) {
-    const canSelect = isMine
-      ? initialPicking ||
-        (acting && (mode === "swap" || (mode === "skill" && targetId === p.id)))
-      : acting && mode === "skill" && targetId === p.id;
+    const canSelect = exchanging
+      ? acting &&
+        (exchangeCards.length < 2 ||
+          exchangeCards.some((card) => card.playerId === p.id))
+      : isMine
+        ? initialPicking ||
+          (acting &&
+            (mode === "swap" || (mode === "skill" && targetId === p.id)))
+        : acting && mode === "skill" && targetId === p.id;
     return (
       <div className="hand" aria-label={`${p.name}的手牌`}>
         {p.hand.map((h) => {
           const isNew = isMine && swapFeedback?.index === h.index;
-          const available =
-            canSelect &&
-            !(mode === "skill" && rank >= 11 && h.index >= mine!.hand.length);
-          const chosen =
-            isMine && mode !== "skill"
+          const available = canSelect;
+          const chosen = exchanging
+            ? exchangeCards.some(
+                (card) => card.playerId === p.id && card.index === h.index,
+              )
+            : isMine && mode !== "skill"
               ? selected.includes(h.index)
               : mode === "skill" && targetId === p.id && skillIndex === h.index;
           return (
@@ -176,7 +213,11 @@ export function App() {
               aria-pressed={chosen}
               disabled={locked || !available}
               onClick={() =>
-                isMine ? void choose(h.index) : setSkillIndex(h.index)
+                exchanging
+                  ? chooseExchange(p.id, h.index)
+                  : isMine
+                    ? void choose(h.index)
+                    : setSkillIndex(h.index)
               }
             >
               <span className="position">
@@ -227,6 +268,18 @@ export function App() {
           <span className="desktop-only"> · 局域网房间</span>
         </div>
       </header>
+      {skillNotice?.skill && (
+        <div className="skill-notice" role="status" data-testid="skill-notice">
+          {v?.players.find((p) => p.id === skillNotice.skill!.actorId)?.name}{" "}
+          发动了
+          {
+            { peek: "偷看", spy: "间谍", exchange: "交换" }[
+              skillNotice.skill.kind
+            ]
+          }
+          技能
+        </div>
+      )}
       <main>
         {!v ? (
           <section className="welcome">
@@ -672,7 +725,7 @@ export function App() {
                                     ? "选择自己的一张牌"
                                     : rank <= 10
                                       ? "选择对手与一个位置"
-                                      : "选择对手和双方相同的位置"
+                                      : "选择两名玩家各一张牌"
                                   : "这张牌，怎么用？"}
                             </h2>
                             {!mode ? (
@@ -718,9 +771,26 @@ export function App() {
                                     <p>
                                       {rank <= 10
                                         ? "查看最多 5 秒；只有你能看到。"
-                                        : "双方必须在相同序号都有牌，交换不揭示暗牌。"}
+                                        : "选择两名不同玩家各一张牌，序号不限；可选自己或两名对手，交换不揭示暗牌。"}
                                     </p>
-                                    {rank >= 9 && (
+                                    {exchanging && (
+                                      <p
+                                        data-testid="exchange-selection"
+                                        aria-live="polite"
+                                      >
+                                        已选 {exchangeCards.length}/2：
+                                        {exchangeCards.length
+                                          ? exchangeCards
+                                              .map(
+                                                (card) =>
+                                                  `${v.players.find((p) => p.id === card.playerId)?.name} · 第 ${card.index + 1} 张`,
+                                              )
+                                              .join(" ↔ ")
+                                          : "请点击牌面选择"}
+                                        。再次点击可取消。
+                                      </p>
+                                    )}
+                                    {rank >= 9 && rank <= 10 && (
                                       <div className="target-buttons">
                                         {v.players
                                           .filter((p) => p.id !== v.selfId)
@@ -751,17 +821,26 @@ export function App() {
                                       !acting ||
                                       (mode === "swap"
                                         ? selected.length === 0
-                                        : skillIndex === undefined || !targetId)
+                                        : exchanging
+                                          ? exchangeCards.length !== 2
+                                          : skillIndex === undefined ||
+                                            !targetId)
                                     }
                                     onClick={() =>
                                       void perform(
                                         mode === "swap"
                                           ? { type: "swap", indices: selected }
-                                          : {
-                                              type: "skill",
-                                              targetId: targetId!,
-                                              index: skillIndex!,
-                                            },
+                                          : exchanging
+                                            ? {
+                                                type: "exchange",
+                                                first: exchangeCards[0],
+                                                second: exchangeCards[1],
+                                              }
+                                            : {
+                                                type: "skill",
+                                                targetId: targetId!,
+                                                index: skillIndex!,
+                                              },
                                       )
                                     }
                                   >
@@ -774,6 +853,7 @@ export function App() {
                                       setMode(undefined);
                                       setSelected([]);
                                       setSkillIndex(undefined);
+                                      setExchangeCards([]);
                                     }}
                                   >
                                     取消

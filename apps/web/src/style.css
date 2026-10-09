@@ -1207,3 +1207,21 @@ footer small {
     order: 4;
   }
 }
+
+.skill-notice {
+  position: fixed;
+  top: 76px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  max-width: calc(100vw - 32px);
+  padding: 12px 20px;
+  border: 1px solid #f5d88e;
+  border-radius: 12px;
+  background: #173a30;
+  color: #f5d88e;
+  text-align: center;
+  overflow-wrap: anywhere;
+  box-shadow: 0 6px 24px #0004;
+  pointer-events: none;
+}

@@ -243,7 +243,15 @@ describe("private swap feedback", () => {
         g.apply(target, { type: "swap", indices: [1] }, 13);
         g.state.deck.push(face(rank));
         g.apply(actor, { type: "draw", source: "deck" }, 14);
-        g.apply(actor, { type: "skill", targetId: target, index }, 15);
+        g.apply(
+          actor,
+          {
+            type: "exchange",
+            first: { playerId: actor, index },
+            second: { playerId: target, index },
+          },
+          15,
+        );
         expect(g.view(actor, 15).swapFeedback).toEqual(
           index === 0
             ? undefined
@@ -342,7 +350,7 @@ describe("skills", () => {
     g.tick(g.state.turnDeadline!);
     expect(g.view(id, g.state.turnDeadline!).reveal).toBeUndefined();
   });
-  it("J/Q swap same position and public status follows card without revealing", () => {
+  it("J/Q exchange preserves public status without revealing hidden cards", () => {
     const g = active();
     const id = current(g),
       other = id === "0" ? "1" : "0";
@@ -351,7 +359,15 @@ describe("skills", () => {
     g.state.players.find((p) => p.id === other)!.hand[0].public = true;
     g.state.deck.push(face(11));
     g.apply(id, { type: "draw", source: "deck" }, 10);
-    g.apply(id, { type: "skill", targetId: other, index: 0 }, 11);
+    g.apply(
+      id,
+      {
+        type: "exchange",
+        first: { playerId: id, index: 0 },
+        second: { playerId: other, index: 0 },
+      },
+      11,
+    );
     expect(g.state.players.find((p) => p.id === id)!.hand[0]).toEqual({
       card: face(6),
       public: true,
@@ -566,7 +582,7 @@ describe("security and complete round invariants", () => {
       expect(() => g.apply(id, command as any, 10)).toThrow();
     expect(JSON.stringify(g.state)).toBe(before);
   });
-  it("invalid same-index exchange retains all cards and permits another choice", () => {
+  it("invalid exchange position retains all cards and permits another choice", () => {
     const g = active();
     const id = current(g),
       other = id === "0" ? "1" : "0";
@@ -575,11 +591,27 @@ describe("security and complete round invariants", () => {
     g.state.deck.push(face(12));
     g.apply(id, { type: "draw", source: "deck" }, 10);
     expect(() =>
-      g.apply(id, { type: "skill", targetId: other, index: 1 }, 11),
+      g.apply(
+        id,
+        {
+          type: "exchange",
+          first: { playerId: id, index: 1 },
+          second: { playerId: other, index: 1 },
+        },
+        11,
+      ),
     ).toThrow();
     expect(g.state.pending?.card.rank).toBe(12);
-    g.apply(id, { type: "skill", targetId: other, index: 0 }, 12);
-    expect(g.state.players.find((p) => p.id === id)!.hand[0].card.rank).toBe(2);
+    g.apply(
+      id,
+      {
+        type: "exchange",
+        first: { playerId: id, index: 0 },
+        second: { playerId: other, index: 1 },
+      },
+      12,
+    );
+    expect(g.state.players.find((p) => p.id === id)!.hand[0].card.rank).toBe(3);
   });
   it("gives a fresh full turn after a delayed tick passes initial phases", () => {
     const g = make();
@@ -617,4 +649,177 @@ describe("partial initial selections", () => {
     g.apply("0", { type: "initialSelect", indices: [3] }, 100);
     expect(g.view("1", 100).initial?.selectedIndices).toEqual([]);
   });
+});
+
+describe("arbitrary player exchange", () => {
+  it.each([11, 12])(
+    "rank %i exchanges two opponents at different positions",
+    (rank) => {
+      const g = active(3);
+      const actor = current(g);
+      const [first, second] = g.state.players.filter((p) => p.id !== actor);
+      const owner = g.state.players.find((p) => p.id === actor)!;
+      setHand(g, first.id, [2]);
+      setHand(g, second.id, [3, 4, 5]);
+      second.hand[2].public = true;
+      first.swapFeedback = {
+        outcome: "swap-success",
+        index: 0,
+        deadline: 5000,
+      };
+      second.swapFeedback = {
+        outcome: "swap-success",
+        index: 2,
+        deadline: 5000,
+      };
+      owner.swapFeedback = {
+        outcome: "swap-success",
+        index: 0,
+        deadline: 5000,
+      };
+      const ownHand = structuredClone(owner.hand);
+      g.state.deck.push(face(rank));
+      g.apply(actor, { type: "draw", source: "deck" }, 10);
+      g.apply(
+        actor,
+        {
+          type: "exchange",
+          first: { playerId: first.id, index: 0 },
+          second: { playerId: second.id, index: 2 },
+        },
+        11,
+      );
+      expect(first.hand).toEqual([{ card: face(5), public: true }]);
+      expect(second.hand.map((h) => h.card.rank)).toEqual([3, 4, 2]);
+      expect(second.hand[2].public).toBe(false);
+      expect(owner.hand).toEqual(ownHand);
+      expect(owner.swapFeedback?.index).toBe(0);
+      expect(first.swapFeedback).toBeUndefined();
+      expect(second.swapFeedback).toBeUndefined();
+      expect(g.state.pending).toBeUndefined();
+      expect(g.state.discard.at(-1)?.rank).toBe(rank);
+      expect(current(g)).not.toBe(actor);
+      for (const viewer of g.state.players) {
+        const view = g.view(viewer.id, 11);
+        expect(view.reveal).toBeUndefined();
+        expect(
+          view.players.find((p) => p.id === second.id)!.hand[2].card,
+        ).toBeUndefined();
+        expect(
+          view.players.find((p) => p.id === first.id)!.hand[0].card,
+        ).toEqual(face(5));
+      }
+    },
+  );
+
+  it("exchanges own position four with opponent position one and clears only moved feedback", () => {
+    const g = active();
+    const actor = current(g);
+    const owner = g.state.players.find((p) => p.id === actor)!;
+    const other = g.state.players.find((p) => p.id !== actor)!;
+    setHand(g, actor, [1, 2, 3, 4]);
+    setHand(g, other.id, [6]);
+    owner.swapFeedback = { outcome: "swap-success", index: 3, deadline: 5000 };
+    other.swapFeedback = { outcome: "swap-success", index: 0, deadline: 5000 };
+    g.state.deck.push(face(12));
+    g.apply(actor, { type: "draw", source: "deck" }, 10);
+    g.apply(
+      actor,
+      {
+        type: "exchange",
+        first: { playerId: other.id, index: 0 },
+        second: { playerId: actor, index: 3 },
+      },
+      11,
+    );
+    expect(owner.hand.map((h) => h.card.rank)).toEqual([1, 2, 3, 6]);
+    expect(other.hand[0].card.rank).toBe(4);
+    expect(owner.swapFeedback).toBeUndefined();
+    expect(other.swapFeedback).toBeUndefined();
+  });
+
+  it.each([
+    "same-player",
+    "missing-player",
+    "negative",
+    "fraction",
+    "out-of-range",
+    "old-command",
+    "off-turn",
+    "wrong-rank",
+    "discard-source",
+  ])("rejects %s without changing cards", (scenario) => {
+    const g = active(3);
+    const actor = current(g);
+    const other = g.state.players.find((p) => p.id !== actor)!.id;
+    g.state.deck.push(face(scenario === "wrong-rank" ? 9 : 11));
+    g.state.discard.push(face(12));
+    g.apply(
+      actor,
+      {
+        type: "draw",
+        source: scenario === "discard-source" ? "discard" : "deck",
+      },
+      10,
+    );
+    const first = { playerId: actor, index: 0 };
+    const second = { playerId: other, index: 3 };
+    if (scenario === "same-player") second.playerId = actor;
+    if (scenario === "missing-player") second.playerId = "missing";
+    if (scenario === "negative") first.index = -1;
+    if (scenario === "fraction") second.index = 1.5;
+    if (scenario === "out-of-range") second.index = 4;
+    const before = structuredClone(g.state);
+    expect(() =>
+      g.apply(
+        scenario === "off-turn" ? other : actor,
+        scenario === "old-command"
+          ? { type: "skill", targetId: other, index: 0 }
+          : { type: "exchange", first, second },
+        11,
+      ),
+    ).toThrow();
+    expect(g.state).toEqual(before);
+  });
+});
+
+describe("public skill announcements", () => {
+  it.each([
+    [7, "peek"],
+    [8, "peek"],
+    [9, "spy"],
+    [10, "spy"],
+    [11, "exchange"],
+    [12, "exchange"],
+  ] as const)(
+    "rank %i announces %s without private card data",
+    (rank, kind) => {
+      const g = active(3);
+      const actor = current(g);
+      const other = g.state.players.find((p) => p.id !== actor)!.id;
+      g.state.deck.push(face(rank));
+      g.apply(actor, { type: "draw", source: "deck" }, 10);
+      g.apply(
+        actor,
+        rank >= 11
+          ? {
+              type: "exchange",
+              first: { playerId: actor, index: 0 },
+              second: { playerId: other, index: 2 },
+            }
+          : { type: "skill", targetId: rank <= 8 ? actor : other, index: 0 },
+        11,
+      );
+      for (const player of g.state.players) {
+        const notice = g.view(player.id, 11).logs.find((l) => l.skill);
+        expect(notice).toMatchObject({
+          at: 11,
+          skill: { actorId: actor, kind },
+        });
+        expect(Object.keys(notice!.skill!).sort()).toEqual(["actorId", "kind"]);
+        if (player.id !== actor)
+          expect(g.view(player.id, 11).reveal).toBeUndefined();
+      }
+    },
+  );
 });

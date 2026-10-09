@@ -197,6 +197,71 @@ describe("real Socket.IO room", () => {
     ).toBe(true);
   });
 
+  it("exchanges two opponents over the wire and rejects malformed or ambiguous selections", async () => {
+    const f = await fixture(3);
+    await f.turns();
+    const state = f.app.room.engine!.state;
+    const actorId = state.players[state.turnIndex].id;
+    const actor = f.clients.find((c) => c.view.selfId === actorId)!;
+    const [first, second] = state.players.filter((p) => p.id !== actorId);
+    const index = state.deck.findIndex((c) => c.rank === 11);
+    [state.deck[index], state.deck[state.deck.length - 1]] = [
+      state.deck[state.deck.length - 1],
+      state.deck[index],
+    ];
+    await f.command(actor.socket, { type: "draw", source: "deck" });
+    const before = structuredClone(state);
+    for (const bad of [
+      { type: "exchange" },
+      {
+        type: "exchange",
+        first: null,
+        second: { playerId: second.id, index: 2 },
+      },
+      {
+        type: "exchange",
+        first: { playerId: first.id, index: "0" },
+        second: { playerId: second.id, index: 2 },
+      },
+      {
+        type: "exchange",
+        first: { playerId: first.id, index: 0 },
+        second: { playerId: first.id, index: 2 },
+      },
+      {
+        type: "exchange",
+        first: { playerId: first.id, index: 0 },
+        second: { playerId: second.id, index: 99 },
+      },
+      { type: "skill", targetId: first.id, index: 0 },
+    ]) {
+      expect((await f.command(actor.socket, bad as GameCommand)).ok).toBe(
+        false,
+      );
+      expect(state).toEqual(before);
+    }
+    const a = structuredClone(first.hand[0]);
+    const b = structuredClone(second.hand[2]);
+    const response = await f.command(actor.socket, {
+      type: "exchange",
+      first: { playerId: first.id, index: 0 },
+      second: { playerId: second.id, index: 2 },
+    });
+    expect(response.ok).toBe(true);
+    expect(first.hand[0]).toEqual(b);
+    expect(second.hand[2]).toEqual(a);
+    for (const client of f.clients) {
+      const view = await f.view(client.socket);
+      expect(view.logs.find((log) => log.skill)?.skill).toEqual({
+        actorId,
+        kind: "exchange",
+      });
+      expect(view.reveal).toBeUndefined();
+      for (const player of view.players)
+        for (const card of player.hand) expect(card.card).toBeUndefined();
+    }
+  });
+
   it("drops unexpired swap feedback when returning to the lobby", async () => {
     const f = await fixture();
     await f.turns();
