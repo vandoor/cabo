@@ -175,3 +175,6 @@ Chromium 验收用例已加入公开弃牌取回、单换/合并明牌、间谍�
 本轮未声称完整 Chromium/WebKit 四项目矩阵或另一台实体手机 LAN 验收通过。发布按 `docs/RELEASES.md` 归档，备份和部署实测记录随发布追加；服务器重启及部署不保留旧内存牌局。
 
 追加手机回归：`npm run test:e2e -- --project=chromium-mobile --grep 'private skill overlay|single swap|merge|J/Q selects'` 4/4 通过（26.7 秒）。覆盖失败多换后增加牌数与换行、单换暗牌及刷新剩余时间、合并压紧位置/减少动态效果/JQ 移动清除，以及详细交换提示；证据 `artifacts/four-rooms/cabo-mobile-extra.log`。
+
+
+生产部署：源码 `17ce15a518ed4c20b3c03bb60809a175b4336a11` 已推送并部署至 3000，新进程 PID 62367（仅记录部署时值）。旧构建在替换前备份并校验，`artifacts/deployments/20261009T123545Z/` 保存部署清单及回滚命令。最初旧进程停止等待超时，已记录 `20261009T123518Z/`，此时未替换文件；后续部署成功。HTTP health 正常、66 个前端资源逐项 SHA-256 匹配，生产无测试路由。真实 WebSocket 与 HTTP polling 连接通过，两间临时房内 3 玩家/1 观众，入座/准备/开局/私密查看/重连的原席位及原 deadline 断言通过，最后关闭测试房。此次验证不覆盖外部实体设备 LAN 链路。发布标签 `release/2026-10-09-17ce15a` 指向实际构建源码，后续归档文档提交不改变标签。
