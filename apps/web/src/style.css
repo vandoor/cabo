@@ -379,23 +379,6 @@ main {
 .reset-used {
   color: var(--gold);
 }
-.cabo-banner {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 13px 20px;
-  border: 1px solid #dfc28744;
-  background: #dfc2870b;
-  border-radius: 8px;
-  margin-bottom: 20px;
-  color: var(--gold);
-  font-size: 13px;
-  flex-wrap: wrap;
-}
-.cabo-banner span {
-  margin-left: auto;
-  color: #d7cbaa;
-}
 .game-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 270px;
@@ -1007,15 +990,6 @@ footer small {
   .score-strip b {
     font-size: 16px;
   }
-  .cabo-banner {
-    font-size: 11px;
-    padding: 11px;
-    gap: 5px;
-  }
-  .cabo-banner span {
-    margin-left: 29px;
-    width: 100%;
-  }
   .game-layout {
     display: flex;
     flex-direction: column;
@@ -1208,20 +1182,107 @@ footer small {
   }
 }
 
-.skill-notice {
+html {
+  scroll-padding-top: calc(var(--table-notices-height, 0px) + 12px);
+}
+.table-notices {
   position: fixed;
-  top: 76px;
+  top: 0;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 50;
-  max-width: calc(100vw - 32px);
+  width: min(1304px, calc(100% - 32px));
+  padding: calc(8px + env(safe-area-inset-top, 0px)) 0 8px;
+  display: grid;
+  gap: 8px;
+  z-index: 26;
+  pointer-events: none;
+}
+.cabo-notice,
+.skill-notice {
   padding: 12px 20px;
   border: 1px solid #f5d88e;
   border-radius: 12px;
   background: #173a30;
   color: #f5d88e;
-  text-align: center;
   overflow-wrap: anywhere;
   box-shadow: 0 6px 24px #0004;
-  pointer-events: none;
+}
+.cabo-notice {
+  background: #324b29;
+  border-width: 2px;
+}
+.cabo-notice-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+.cabo-notice-title strong {
+  flex: 1 1 220px;
+  min-width: 0;
+  font-size: 16px;
+}
+.cabo-notice-title span {
+  font-weight: 700;
+}
+.cabo-notice p {
+  margin: 6px 0 0;
+  color: #f4f1e5;
+  font-size: 13px;
+}
+.skill-notice {
+  text-align: center;
+  justify-self: center;
+  max-width: 100%;
+}
+@media (max-width: 600px) {
+  .cabo-notice,
+  .skill-notice {
+    padding: 10px 12px;
+  }
+  .cabo-notice-title strong {
+    flex-basis: calc(100% - 50px);
+  }
+  .cabo-notice-title span {
+    margin-left: 41px;
+  }
+}
+
+/* Reserve space across timer ticks and transient notices, including mobile. */
+.notice-space {
+  height: 174px;
+}
+.clock b {
+  display: inline-block;
+  width: 2ch;
+  text-align: right;
+}
+.countdown {
+  display: inline-block;
+  min-width: 2ch;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.table-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.deck-count {
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 600px) {
+  .notice-space {
+    height: 206px;
+  }
+  .table-meta {
+    max-width: 48%;
+    gap: 8px;
+  }
+  .deck-count {
+    font-size: 13px;
+  }
 }

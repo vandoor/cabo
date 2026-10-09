@@ -4,6 +4,7 @@ import type {
   GameLog,
   Phase,
   PlayerView,
+  SpectatorView,
   Reveal,
   RoundResult,
   SwapFeedback,
@@ -551,16 +552,14 @@ export class GameEngine {
     }
     return changed;
   }
-  view(playerId: string, now: number): PlayerView {
-    this.tick(now);
-    const s = this.state,
-      self = this.player(playerId);
+  private publicView(now: number): SpectatorView {
+    const s = this.state;
     const ended = s.phase === "roundEnd" || s.phase === "gameOver";
-    const result: PlayerView = {
+    const result: SpectatorView = {
+      role: "spectator",
       version: s.version,
       serverNow: now,
       phase: s.phase,
-      selfId: playerId,
       hostId: s.players[0].id,
       players: s.players.map((p) => ({
         id: p.id,
@@ -581,6 +580,34 @@ export class GameEngine {
         ...log,
         ...(log.skill ? { skill: { ...log.skill } } : {}),
       })),
+    };
+    if (s.discard.length)
+      result.discardTop = { ...s.discard[s.discard.length - 1] };
+    if (s.caboCallerId) {
+      result.caboCallerId = s.caboCallerId;
+      result.remainingFinalTurns = s.remainingFinalTurns;
+    }
+    if (s.results) result.results = structuredClone(s.results);
+    if (s.nextRoundAt !== undefined) result.nextRoundAt = s.nextRoundAt;
+    if (s.winners) result.winners = [...s.winners];
+    if (s.phase === "turn") {
+      result.turnPlayerId = s.players[s.turnIndex].id;
+      result.turnDeadline = s.turnDeadline;
+    }
+    return result;
+  }
+  spectatorView(now: number): SpectatorView {
+    this.tick(now);
+    return this.publicView(now);
+  }
+  view(playerId: string, now: number): PlayerView {
+    this.tick(now);
+    const s = this.state,
+      self = this.player(playerId);
+    const result: PlayerView = {
+      ...this.publicView(now),
+      role: "player",
+      selfId: playerId,
     };
     if (s.phase === "initial")
       result.initial = {
@@ -604,15 +631,6 @@ export class GameEngine {
         card: { ...s.pending.card },
         source: s.pending.source,
       };
-    if (s.discard.length)
-      result.discardTop = { ...s.discard[s.discard.length - 1] };
-    if (s.caboCallerId) {
-      result.caboCallerId = s.caboCallerId;
-      result.remainingFinalTurns = s.remainingFinalTurns;
-    }
-    if (s.results) result.results = structuredClone(s.results);
-    if (s.nextRoundAt !== undefined) result.nextRoundAt = s.nextRoundAt;
-    if (s.winners) result.winners = [...s.winners];
     return result;
   }
 }

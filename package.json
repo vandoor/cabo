@@ -19,7 +19,10 @@
     "test": "vitest run",
     "test:e2e": "node scripts/e2e.mjs",
     "check": "npm run typecheck && npm test && npm run build && npm run test:e2e",
-    "format": "prettier --write apps/*/src packages/game/src scripts tests *.ts"
+    "format": "prettier --write apps/*/src packages/game/src scripts tests *.ts",
+    "build:acceptance": "npm run build && esbuild tests/e2e/server.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/test-server.js",
+    "accept": "node scripts/acceptance.mjs",
+    "test:timing": "CABO_TIMING_ONLY=1 vitest run --config vitest.acceptance.config.ts"
   },
   "dependencies": {
     "express": "^5.1.0",

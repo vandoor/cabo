@@ -80,6 +80,7 @@ export interface GameLog {
   text: string;
 }
 export interface PlayerView {
+  role: "player";
   version: number;
   serverNow: number;
   phase: Phase;
@@ -106,4 +107,22 @@ export interface PlayerView {
   nextRoundAt?: number;
   winners?: string[];
   logs: GameLog[];
+}
+
+export interface SpectatorView extends Omit<
+  PlayerView,
+  "role" | "selfId" | "initial" | "reveal" | "swapFeedback" | "pending"
+> {
+  role: "spectator";
+  selfId?: never;
+  initial?: never;
+  reveal?: never;
+  swapFeedback?: never;
+  pending?: never;
+}
+export type RoomView = PlayerView | SpectatorView;
+export interface WatchAck {
+  ok: boolean;
+  error?: RuleErrorInfo;
+  view?: SpectatorView;
 }

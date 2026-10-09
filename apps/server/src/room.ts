@@ -6,6 +6,7 @@ import type {
   CommandEnvelope,
   GameCommand,
   PlayerView,
+  SpectatorView,
 } from "../../../packages/game/src/types.js";
 
 interface Seat {
@@ -24,6 +25,7 @@ export interface RoomOptions {
 /** All entry points are synchronous: Node's event loop serializes commands and timeouts. */
 export class Room {
   private seats: Seat[] = [];
+  private watchers = new Set<string>();
   private version = 0;
   private hostId = "";
   private emptySince?: number;
@@ -44,6 +46,7 @@ export class Room {
   }
   private view(seat: Seat, now: number): PlayerView {
     const view: PlayerView = this.engine?.view(seat.id, now) ?? {
+      role: "player",
       version: this.version,
       serverNow: now,
       phase: "lobby",
@@ -68,12 +71,42 @@ export class Room {
     }));
     return view;
   }
+  private spectatorView(now: number): SpectatorView {
+    const view: SpectatorView = this.engine?.spectatorView(now) ?? {
+      role: "spectator",
+      version: this.version,
+      serverNow: now,
+      phase: "lobby",
+      hostId: this.hostId,
+      players: [],
+      round: 0,
+      deckCount: 0,
+      logs: [],
+    };
+    view.version = this.version;
+    view.hostId = this.hostId;
+    view.players = this.seats.map((seat) => ({
+      id: seat.id,
+      name: seat.name,
+      total: 0,
+      resetUsed: false,
+      hand: [],
+      ...view.players.find((player) => player.id === seat.id),
+      connected: !!seat.socketId,
+      ready: seat.ready,
+    }));
+    return view;
+  }
   private migrateHost() {
     if (!this.seats.some((s) => s.id === this.hostId && s.socketId))
       this.hostId =
         this.seats.find((s) => s.socketId)?.id ?? this.seats[0]?.id ?? "";
   }
   private broadcast(now: number) {
+    if (this.watchers.size) {
+      const view = this.spectatorView(now);
+      for (const id of this.watchers) this.io.to(id).emit("state", view);
+    }
     for (const s of this.seats)
       if (s.socketId) this.io.to(s.socketId).emit("state", this.view(s, now));
   }
@@ -110,6 +143,7 @@ export class Room {
     this.migrateHost();
   }
   private connect(socket: Socket) {
+    let watched = false;
     let budget = 100;
     let budgetAt = this.now();
     const rate = (now: number) => {
@@ -119,16 +153,92 @@ export class Room {
       }
       return --budget >= 0;
     };
-    const reply = (ack: unknown, value: unknown) => {
-      if (typeof ack === "function") ack(value);
+    const reply = (ack: unknown, value: unknown, result?: string) => {
+      if (typeof ack === "function") ack(value, result);
     };
-    socket.on("join", (input: unknown, ack: unknown) => {
+    const onRequest = (
+      event: string,
+      handler: (input: unknown, ack: unknown) => void,
+    ) => {
+      socket.on(event, (input: unknown, ack: unknown) => {
+        const started = performance.now();
+        if (event === "sync" && typeof input === "function") {
+          ack = input;
+          input = undefined;
+        }
+        const record =
+          input && typeof input === "object"
+            ? (input as Record<string, unknown>)
+            : undefined;
+        const id = record?.requestId;
+        const requestId =
+          typeof id === "string" && /^[A-Za-z0-9_-]{1,100}$/.test(id)
+            ? id
+            : undefined;
+        const command = record?.command;
+        const kind =
+          command && typeof command === "object"
+            ? (command as Record<string, unknown>).type
+            : undefined;
+        const step =
+          event === "command" &&
+          typeof kind === "string" &&
+          commandSteps.has(kind)
+            ? kind
+            : event;
+        handler(input, (value: Ack, cachedResult?: string) => {
+          const entry = {
+            side: "server",
+            step,
+            phase: "handle",
+            durationMs: performance.now() - started,
+            result:
+              cachedResult ??
+              (value.ok ? "ok" : `error:${value.error?.code ?? "INPUT"}`),
+            ...(requestId ? { requestId } : {}),
+          };
+          setImmediate(() =>
+            console.log("[cabo-timing]", JSON.stringify(entry)),
+          );
+          if (typeof ack === "function") ack(value);
+        });
+      });
+    };
+    onRequest("watch", (_input, ack) => {
       const now = this.now();
       this.tick(now);
       if (!rate(now))
         return reply(ack, {
           ok: false,
           error: { code: "RATE", message: "操作太快，请稍后再试" },
+        });
+      if (this.seat(socket))
+        return reply(ack, {
+          ok: false,
+          error: { code: "JOINED", message: "玩家不能同时观战" },
+        });
+      watched = true;
+      this.watchers.add(socket.id);
+      const view = this.spectatorView(now);
+      socket.emit("state", view);
+      reply(ack, { ok: true, view });
+    });
+    onRequest("unwatch", (_input, ack) => {
+      this.watchers.delete(socket.id);
+      reply(ack, { ok: true });
+    });
+    onRequest("join", (input: unknown, ack: unknown) => {
+      const now = this.now();
+      this.tick(now);
+      if (!rate(now))
+        return reply(ack, {
+          ok: false,
+          error: { code: "RATE", message: "操作太快，请稍后再试" },
+        });
+      if (watched)
+        return reply(ack, {
+          ok: false,
+          error: { code: "SPECTATOR", message: "请退出观战后使用新的连接入座" },
         });
       if (this.seat(socket))
         return reply(ack, {
@@ -195,31 +305,45 @@ export class Room {
       this.changed(now);
       reply(ack, { ok: true, token: seat.token, view: this.view(seat, now) });
     });
-    socket.on("sync", (ack: unknown) => {
+    onRequest("sync", (_input: unknown, ack: unknown) => {
       const now = this.now();
       this.tick(now);
       const seat = this.seat(socket);
       reply(
         ack,
-        seat
-          ? { ok: true, view: this.view(seat, now) }
-          : { ok: false, error: { code: "SESSION", message: "请先入座" } },
+        this.watchers.has(socket.id)
+          ? { ok: true, view: this.spectatorView(now) }
+          : seat
+            ? { ok: true, view: this.view(seat, now) }
+            : {
+                ok: false,
+                error: { code: "SESSION", message: "请先入座或观战" },
+              },
       );
     });
-    socket.on("command", (input: unknown, ack: unknown) => {
+    onRequest("command", (input: unknown, ack: unknown) => {
       const now = this.now();
       this.tick(now);
       const seat = this.seat(socket);
+      if (watched)
+        return reply(ack, {
+          ok: false,
+          error: { code: "SPECTATOR", message: "观战连接不能操作牌局" },
+        });
       if (!seat)
         return reply(ack, {
           ok: false,
           error: { code: "SESSION", message: "连接身份已失效" },
         });
-      const respond = (a: Omit<Ack, "view">) =>
-        reply(ack, {
-          ...a,
-          view: this.seats.includes(seat) ? this.view(seat, now) : undefined,
-        });
+      const respond = (a: Omit<Ack, "view">, cached = false) =>
+        reply(
+          ack,
+          {
+            ...a,
+            view: this.seats.includes(seat) ? this.view(seat, now) : undefined,
+          },
+          cached ? `cached:${a.ok ? "ok" : "error"}` : undefined,
+        );
       if (!rate(now))
         return respond({
           ok: false,
@@ -231,7 +355,7 @@ export class Room {
           error: { code: "INPUT", message: "操作格式错误" },
         });
       const cached = seat.requests.get(input.requestId);
-      if (cached) return respond(cached);
+      if (cached) return respond(cached, true);
       let result: Omit<Ack, "view">;
       try {
         if (input.version !== this.version)
@@ -254,6 +378,7 @@ export class Room {
       respond(result);
     });
     socket.on("disconnect", () => {
+      this.watchers.delete(socket.id);
       const now = this.now();
       const seat = this.seat(socket);
       if (!seat) return;
@@ -369,3 +494,21 @@ function validEnvelope(value: unknown): value is CommandEnvelope {
       return false;
   }
 }
+
+const commandSteps = new Set([
+  "ready",
+  "start",
+  "leave",
+  "kick",
+  "endGame",
+  "nextRound",
+  "restart",
+  "initialSelect",
+  "closeReveal",
+  "draw",
+  "discard",
+  "swap",
+  "skill",
+  "exchange",
+  "cabo",
+]);

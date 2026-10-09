@@ -39,3 +39,27 @@ Socket.IO 默认不保证断线期间的消息重发，因此重连不依赖消�
 服务器验证当前回合、牌堆来源、J/Q、玩家和位置后一次性交换，公开状态跟随牌移动，清除各自被移动位置的 `swapFeedback`。校验失败不交换、不弃置待处理功能牌，客户端可重新选择。交换不新增私密揭示。
 
 成功使用技能时，公共日志增加 `skill:{actorId,kind}`，`kind` 为 `peek`、`spy` 或 `exchange`。字段不含被查看的牌面。其他玩家显示“某某 发动了偷看／间谍／交换技能”，使用日志的服务端时间 `at + 5000` 到期；操作玩家已有自己的技能反馈，不显示此提示。刷新不会延长展示时间；立即进入结算或终局时仍显示至原截止时间，返回大厅后不显示。
+
+
+## CABO 持续提示（2026-10-09）
+
+客户端直接使用现有 `caboCallerId` 和 `remainingFinalTurns`，无新增协议字段。仅在 `turn` 阶段有人呼唤 CABO 时，所有玩家在顶部固定区域看到呼唤者、剩余行动人数和“其他玩家各完成一次行动后结算”。状态随服务端更新，刷新和自动重连后恢复，结算、终局、大厅或新轮不显示。
+
+CABO 与技能提示共用 `TableNotices`：CABO 在上，技能提示在下；使用固定预留区域稳定页面布局。通知高于错误/断线提示、低于确认和私密查看弹窗，不拦截点击；技能提示仍使用原服务端截止时间。有呼唤者时操作区改为最后行动阶段提示，已禁用的 CABO 按钮显示“已有玩家呼唤 CABO”。
+
+
+## 观战订阅与角色
+
+`PlayerView.role` 为 `player`，`SpectatorView.role` 为 `spectator`，公共客户端类型为 `RoomView`。`watch({requestId}, ack)` 无需昵称或 token，在大厅及任意对局阶段均可订阅；ACK 返回 `{ok, view}`，后续通过 `state` 推送公共状态。`unwatch({requestId}, ack)` 取消推送。`sync({requestId}, ack)` 按当前连接角色返回视图，兼容旧的 `sync(ack)`。
+
+公共投影直接从引擎状态生成，再单独向玩家投影附加私密字段。观战数据含玩家和手牌数量、公开牌、弃牌顶、deckCount、行动者/截止时间、CABO、公开技能日志和结算；不含 `selfId`、`initial`、`pending`、`reveal`、`swapFeedback`，暗牌只含序号和公开标志。观战连接不占席位、不影响准备判断、房主迁移或离线大厅清理；发送游戏命令返回 `SPECTATOR`。观战连接即使取消订阅，也不能原地切换为玩家。
+
+浏览器用 URL `?watch=1` 保存观战模式，重连优先 watch，不使用或覆盖 localStorage 中的原玩家 token。退出后建立新的访客连接返回首页；需要主动重新入座，或刷新恢复原玩家身份，无观战页面直接转玩家控件。
+
+## 响应计时
+
+客户端和服务端分别用 `performance.now()` 计算相对耗时，以 `requestId` 关联，不能直接相减两端时钟。日志前缀 `[cabo-timing]`，JSON 字段为 `side,step,phase,durationMs,result,requestId`（旧客户端无 requestId 时服务端省略它）。不记录 token、昵称、命令参数、牌面或完整状态。
+
+客户端网络操作记录 `start/send/ack/commit/paint`，重试额外记录 `retry`；纯本地选牌记录 `start/commit/paint`。`commit` 在 React layout effect 中采集，`paint` 是提交之后双 requestAnimationFrame 的绘制机会测量，不等同于显示器硬件呈现。服务端 `handle` 是同一请求处理至响应就绪的耗时，失败及去重命中均记录。日志使用异步输出，不在操作路径等待采集完成。客户端自动命令重试仍沿用相同 requestId；验收命令本身不重试。
+
+倒计时仅更新子组件显示秒数，父牌桌只在状态、交互或各私密提示截止时更新；首页不运行牌局计时器。8 秒结算冷却与服务端超时保护不变。

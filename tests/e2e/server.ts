@@ -6,6 +6,8 @@ let rejectPartial = false;
 function installFault() {
   app.io.on("connection", (socket) =>
     socket.use((packet, next) => {
+      if (packet[0] === "watch") socket.data.testWatching = true;
+      if (packet[0] === "unwatch") socket.data.testWatching = false;
       if (
         rejectPartial &&
         packet[0] === "command" &&
@@ -25,6 +27,16 @@ app.app.post("/__test/reject-partial", (_req, res) => {
   res.json({ ok: true });
 });
 setInterval(() => app.room.tick(), 100);
+// Drop transports without revoking seats so clients exercise automatic reconnect.
+app.app.post("/__test/drop-connections", (_req, res) => {
+  for (const socket of app.io.sockets.sockets.values()) socket.conn.close();
+  res.json({ ok: true });
+});
+app.app.post("/__test/drop-watchers", (_req, res) => {
+  for (const socket of app.io.sockets.sockets.values())
+    if (socket.data.testWatching) socket.conn.close();
+  res.json({ ok: true });
+});
 app.app.post("/__test/reset", (_req, res) => {
   app.io.disconnectSockets(true);
   app.io.removeAllListeners("connection");

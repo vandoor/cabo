@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import type {
   CardFace,
   CardPosition,
@@ -7,6 +7,9 @@ import type {
   RoundResult,
 } from "../../../packages/game/src/types";
 import { useRoom } from "./useRoom";
+import { TableNotices } from "./TableNotices";
+import { Countdown, useDeadline } from "./Deadline";
+import { commitOperations, localOperation } from "./timing";
 export const faceUrl = (card?: CardFace) =>
   card ? `/cards/${card.suit}-${card.rank}.svg` : "/cards/back.svg";
 const cardName = (c?: CardFace) =>
@@ -64,31 +67,37 @@ export function App() {
   const room = useRoom();
   const { view: v, connected, busy, error, send } = room;
   const [name, setName] = useState("");
-  const [now, setNow] = useState(Date.now());
+  useLayoutEffect(commitOperations);
+  const spectator = v?.role === "spectator";
   const [selected, setSelected] = useState<number[]>([]);
   const [mode, setMode] = useState<"swap" | "skill" | undefined>();
   const [target, setTarget] = useState("");
   const [skillIndex, setSkillIndex] = useState<number>();
   const [exchangeCards, setExchangeCards] = useState<CardPosition[]>([]);
   const [confirm, setConfirm] = useState<"cabo" | "endGame" | undefined>();
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 100);
-    return () => clearInterval(timer);
-  }, []);
-  const serverNow = now + room.offset;
-  const seconds = (deadline?: number) =>
-    Math.max(0, Math.ceil(((deadline ?? serverNow) - serverNow) / 1000));
+  const turnActive = useDeadline(v?.turnDeadline, room.offset);
+  const initialActive = useDeadline(v?.initial?.deadline, room.offset);
+  const revealActive = useDeadline(v?.reveal?.deadline, room.offset);
+  const feedbackActive = useDeadline(v?.swapFeedback?.deadline, room.offset);
+  const cooling = useDeadline(v?.nextRoundAt, room.offset);
+  const latestSkill =
+    v?.phase !== "lobby"
+      ? [...(v?.logs ?? [])]
+          .reverse()
+          .find((log) => log.skill && log.skill.actorId !== v?.selfId)
+      : undefined;
+  const skillActive = useDeadline(
+    latestSkill ? latestSkill.at + 5000 : undefined,
+    room.offset,
+  );
   const mine = v?.players.find((p) => p.id === v.selfId);
-  const host = v?.hostId === v?.selfId;
+  const host = !!v && !spectator && v.hostId === v.selfId;
   const myTurn = v?.phase === "turn" && v.turnPlayerId === v.selfId;
   const locked = !connected || busy;
-  const acting = myTurn && seconds(v?.turnDeadline) > 0;
-  const reveal =
-    v?.reveal && v.reveal.deadline > serverNow && connected
-      ? v.reveal
-      : undefined;
+  const acting = myTurn && turnActive;
+  const reveal = v?.reveal && revealActive && connected ? v.reveal : undefined;
   const swapFeedback =
-    v?.phase === "turn" && v.swapFeedback && v.swapFeedback.deadline > serverNow
+    v?.phase === "turn" && v.swapFeedback && feedbackActive
       ? v.swapFeedback
       : undefined;
   const swapMessage = swapFeedback
@@ -126,6 +135,7 @@ export function App() {
     }
   };
   const choose = async (index: number) => {
+    localOperation("select");
     if (v?.phase === "initial" && v.initial?.status === "selecting") {
       const next = selected.includes(index)
         ? selected.filter((i) => i !== index)
@@ -145,24 +155,15 @@ export function App() {
   const initialPicking =
     v?.phase === "initial" &&
     v.initial?.status === "selecting" &&
-    seconds(v.initial.deadline) > 0;
+    initialActive;
   const rank = v?.pending?.card.rank ?? 0;
   const skillPossible =
     acting && v?.pending?.source === "deck" && rank >= 7 && rank <= 12;
   const exchanging = mode === "skill" && (rank === 11 || rank === 12);
   const targetId = rank <= 8 ? v?.selfId : target;
-  const skillNotice =
-    v && v.phase !== "lobby"
-      ? [...v.logs]
-          .reverse()
-          .find(
-            (log) =>
-              log.skill &&
-              log.skill.actorId !== v.selfId &&
-              log.at + 5000 > serverNow,
-          )
-      : undefined;
+  const skillNotice = skillActive ? latestSkill : undefined;
   const chooseExchange = (playerId: string, index: number) => {
+    localOperation("select");
     setExchangeCards((cards) => {
       const existing = cards.find((card) => card.playerId === playerId);
       if (existing?.index === index)
@@ -180,7 +181,9 @@ export function App() {
     setSkillIndex(undefined);
     setExchangeCards([]);
     setTarget(
-      rank <= 8 ? v!.selfId : v!.players.find((p) => p.id !== v!.selfId)!.id,
+      rank <= 8
+        ? (v!.selfId ?? "")
+        : v!.players.find((p) => p.id !== v!.selfId)!.id,
     );
   };
   function hand(p: PlayerSummary, isMine = false) {
@@ -217,7 +220,7 @@ export function App() {
                   ? chooseExchange(p.id, h.index)
                   : isMine
                     ? void choose(h.index)
-                    : setSkillIndex(h.index)
+                    : (localOperation("select"), setSkillIndex(h.index))
               }
             >
               <span className="position">
@@ -258,6 +261,24 @@ export function App() {
             : "本轮结算";
   return (
     <div className="app">
+      {v && (
+        <TableNotices
+          cabo={
+            v?.phase === "turn" && v.caboCallerId
+              ? {
+                  callerName: v.players.find((p) => p.id === v.caboCallerId)!
+                    .name,
+                  remainingTurns: v.remainingFinalTurns ?? 0,
+                }
+              : undefined
+          }
+          skillMessage={
+            skillNotice?.skill
+              ? `${v?.players.find((p) => p.id === skillNotice.skill!.actorId)?.name} 发动了${{ peek: "偷看", spy: "间谍", exchange: "交换" }[skillNotice.skill.kind]}技能`
+              : undefined
+          }
+        />
+      )}
       <header className="topbar">
         <a className="brand" href="/" aria-label="CABO 首页">
           CABO<span>林间牌桌</span>
@@ -268,18 +289,6 @@ export function App() {
           <span className="desktop-only"> · 局域网房间</span>
         </div>
       </header>
-      {skillNotice?.skill && (
-        <div className="skill-notice" role="status" data-testid="skill-notice">
-          {v?.players.find((p) => p.id === skillNotice.skill!.actorId)?.name}{" "}
-          发动了
-          {
-            { peek: "偷看", spy: "间谍", exchange: "交换" }[
-              skillNotice.skill.kind
-            ]
-          }
-          技能
-        </div>
-      )}
       <main>
         {!v ? (
           <section className="welcome">
@@ -327,6 +336,13 @@ export function App() {
               </div>
               <small>2–4 人 · 手机 / 电脑 · 无需注册</small>
             </form>
+            <button
+              className="secondary"
+              disabled={busy || !connected}
+              onClick={() => void room.watch()}
+            >
+              观战
+            </button>
           </section>
         ) : (
           <>
@@ -339,22 +355,34 @@ export function App() {
                 </div>
                 <h1>{phaseLabel}</h1>
               </div>
-              {v.phase === "turn" && (
-                <div
-                  className={`clock ${seconds(v.turnDeadline) <= 10 ? "urgent" : ""}`}
-                >
-                  <Icon name="timer" />
-                  <b>{seconds(v.turnDeadline)}</b>
-                  <span>秒</span>
-                </div>
-              )}
-              {v.phase === "initial" && (
-                <div className="clock">
-                  <Icon name="timer" />
-                  <b>{seconds(v.initial?.deadline)}</b>
-                  <span>秒</span>
-                </div>
-              )}
+              <div className="table-meta">
+                <strong className="deck-count" data-testid="deck-count">
+                  摸牌堆剩余 {v.deckCount} 张
+                </strong>
+                {spectator && (
+                  <button
+                    className="secondary"
+                    disabled={busy}
+                    onClick={() => void room.unwatch()}
+                  >
+                    退出观战
+                  </button>
+                )}
+                {v.phase === "turn" && (
+                  <Countdown
+                    clock
+                    deadline={v.turnDeadline}
+                    offset={room.offset}
+                  />
+                )}
+                {v.phase === "initial" && !spectator && (
+                  <Countdown
+                    clock
+                    deadline={v.initial?.deadline}
+                    offset={room.offset}
+                  />
+                )}
+              </div>
             </div>
             {v.phase === "lobby" ? (
               <section className="lobby">
@@ -396,42 +424,44 @@ export function App() {
                     );
                   })}
                 </div>
-                <div className="lobby-actions">
-                  <button
-                    className={mine?.ready ? "secondary" : "primary"}
-                    disabled={locked}
-                    onClick={() =>
-                      void send({ type: "ready", ready: !mine?.ready })
-                    }
-                  >
-                    {mine?.ready ? "取消准备" : "准备"}
-                  </button>
-                  {host && (
+                {!spectator && (
+                  <div className="lobby-actions">
                     <button
-                      className="primary"
-                      disabled={
-                        locked ||
-                        v.players.length < 2 ||
-                        !v.players.every((p) => p.ready && p.connected)
+                      className={mine?.ready ? "secondary" : "primary"}
+                      disabled={locked}
+                      onClick={() =>
+                        void send({ type: "ready", ready: !mine?.ready })
                       }
-                      onClick={() => void send({ type: "start" })}
                     >
-                      开始游戏
+                      {mine?.ready ? "取消准备" : "准备"}
                     </button>
-                  )}
-                  <span>
-                    {v.players.length < 2
-                      ? "再邀请一位朋友，就可以开始了。"
-                      : "所有人准备后，由房主开始。"}
-                  </span>
-                  <button
-                    className="text-button"
-                    disabled={locked}
-                    onClick={() => void send({ type: "leave" })}
-                  >
-                    离开房间
-                  </button>
-                </div>
+                    {host && (
+                      <button
+                        className="primary"
+                        disabled={
+                          locked ||
+                          v.players.length < 2 ||
+                          !v.players.every((p) => p.ready && p.connected)
+                        }
+                        onClick={() => void send({ type: "start" })}
+                      >
+                        开始游戏
+                      </button>
+                    )}
+                    <span>
+                      {v.players.length < 2
+                        ? "再邀请一位朋友，就可以开始了。"
+                        : "所有人准备后，由房主开始。"}
+                    </span>
+                    <button
+                      className="text-button"
+                      disabled={locked}
+                      onClick={() => void send({ type: "leave" })}
+                    >
+                      离开房间
+                    </button>
+                  </div>
+                )}
               </section>
             ) : (
               <>
@@ -463,16 +493,6 @@ export function App() {
                     </div>
                   ))}
                 </div>
-                {v.caboCallerId && (
-                  <div className="cabo-banner">
-                    <Icon name="cabo" />
-                    <b>
-                      {v.players.find((p) => p.id === v.caboCallerId)?.name}{" "}
-                      呼唤了 CABO
-                    </b>
-                    <span>最后 {v.remainingFinalTurns ?? 0} 人行动</span>
-                  </div>
-                )}
                 {v.phase === "roundEnd" || v.phase === "gameOver" ? (
                   <section className="results">
                     <h2>{v.phase === "gameOver" ? "本场赢家" : "本轮结算"}</h2>
@@ -519,7 +539,7 @@ export function App() {
                       {host ? (
                         <button
                           className="primary"
-                          disabled={locked || seconds(v.nextRoundAt) > 0}
+                          disabled={locked || cooling}
                           onClick={() =>
                             void perform({
                               type:
@@ -537,8 +557,15 @@ export function App() {
                           {v.phase === "gameOver" ? "重新开场" : "开始下一轮"}
                         </p>
                       )}
-                      {seconds(v.nextRoundAt) > 0 && (
-                        <span>再看 {seconds(v.nextRoundAt)} 秒</span>
+                      {cooling && (
+                        <span>
+                          再看{" "}
+                          <Countdown
+                            deadline={v.nextRoundAt}
+                            offset={room.offset}
+                          />{" "}
+                          秒
+                        </span>
                       )}
                     </div>
                   </section>
@@ -604,267 +631,284 @@ export function App() {
                       </div>
                       <p className="table-motto">留住低分，藏好秘密。</p>
                     </section>
-                    <section className="my-area">
-                      <div className="player-title">
-                        <h2>
-                          我的手牌 <span>{mine?.name}</span>
-                        </h2>
-                        <span>{mine?.hand.length} 张 · 位置从左至右</span>
-                      </div>
-                      {swapMessage && (
-                        <p className="swap-feedback" role="status">
-                          {swapMessage}
-                        </p>
-                      )}
-                      {mine && hand(mine, true)}
-                    </section>
-                    <section className="action-area" aria-label="回合操作">
-                      {v.phase === "initial" ? (
-                        <>
+                    {!spectator && (
+                      <section className="my-area">
+                        <div className="player-title">
                           <h2>
-                            {v.initial?.status === "selecting"
-                              ? "选两张牌，记住它们。"
-                              : v.initial?.status === "done"
-                                ? "记住了，就等朋友准备好。"
-                                : "正在私密查看"}
+                            我的手牌 <span>{mine?.name}</span>
                           </h2>
-                          <p>
-                            30 秒内选牌，最多查看 10 秒；盖回后不再保留提示。
+                          <span>{mine?.hand.length} 张 · 位置从左至右</span>
+                        </div>
+                        {swapMessage && (
+                          <p className="swap-feedback" role="status">
+                            {swapMessage}
                           </p>
-                          {initialPicking && (
-                            <button
-                              className="primary"
-                              disabled={locked || selected.length !== 2}
-                              onClick={() =>
-                                void send({
-                                  type: "initialSelect",
-                                  indices: selected,
-                                })
-                              }
-                            >
-                              查看选中的两张牌
-                            </button>
-                          )}
-                          {v.initial?.status === "done" && (
-                            <span className="tag">
-                              已完成 {v.initial.doneIds.length} /{" "}
-                              {v.players.length}
-                            </span>
-                          )}
-                        </>
-                      ) : !myTurn ? (
-                        <>
-                          <h2>看看牌桌，想好下一步。</h2>
-                          <p>
-                            等待{" "}
-                            {
-                              v.players.find((p) => p.id === v.turnPlayerId)
-                                ?.name
-                            }{" "}
-                            行动。超时会自动弃牌。
-                          </p>
-                        </>
-                      ) : reveal ? (
-                        <h2>记住牌面后，盖回结束回合。</h2>
-                      ) : !v.pending ? (
-                        <>
-                          <h2>拿一张牌，或呼唤 CABO。</h2>
-                          <div className="button-row">
-                            <button
-                              className="primary"
-                              disabled={locked || !acting}
-                              onClick={() =>
-                                void perform({ type: "draw", source: "deck" })
-                              }
-                            >
-                              <Icon name="draw" />
-                              摸一张牌
-                            </button>
-                            <button
-                              className="secondary"
-                              disabled={locked || !acting || !v.discardTop}
-                              onClick={() =>
-                                void perform({
-                                  type: "draw",
-                                  source: "discard",
-                                })
-                              }
-                            >
-                              <Icon name="discard" />
-                              取弃牌堆
-                            </button>
-                            <button
-                              className="cabo-button"
-                              disabled={locked || !acting || !!v.caboCallerId}
-                              onClick={() => setConfirm("cabo")}
-                            >
-                              呼唤 CABO
-                            </button>
-                          </div>
-                        </>
-                      ) : (
-                        <div className="pending-actions">
-                          <div className="pending" data-testid="pending-card">
-                            <img
-                              src={faceUrl(v.pending.card)}
-                              alt={`摸到 ${cardName(v.pending.card)}`}
-                            />
-                            <span>
-                              仅你可见 ·{" "}
-                              {v.pending.source === "deck"
-                                ? "摸牌堆"
-                                : "弃牌堆"}
-                            </span>
-                          </div>
-                          <div className="pending-controls">
+                        )}
+                        {mine && hand(mine, true)}
+                      </section>
+                    )}
+                    {!spectator && (
+                      <section className="action-area" aria-label="回合操作">
+                        {v.phase === "initial" ? (
+                          <>
                             <h2>
-                              {mode === "swap"
-                                ? "选择要换掉的位置"
-                                : mode === "skill"
-                                  ? rank <= 8
-                                    ? "选择自己的一张牌"
-                                    : rank <= 10
-                                      ? "选择对手与一个位置"
-                                      : "选择两名玩家各一张牌"
-                                  : "这张牌，怎么用？"}
+                              {v.initial?.status === "selecting"
+                                ? "选两张牌，记住它们。"
+                                : v.initial?.status === "done"
+                                  ? "记住了，就等朋友准备好。"
+                                  : "正在私密查看"}
                             </h2>
-                            {!mode ? (
-                              <div className="button-row">
-                                <button
-                                  className="secondary"
-                                  disabled={locked || !acting}
-                                  onClick={() =>
-                                    void perform({ type: "discard" })
-                                  }
-                                >
-                                  直接弃置
-                                </button>
-                                <button
-                                  className="primary"
-                                  disabled={locked || !acting}
-                                  onClick={() => {
-                                    setMode("swap");
-                                    setSelected([]);
-                                  }}
-                                >
-                                  换入手牌
-                                </button>
-                                {skillPossible && (
+                            <p>
+                              30 秒内选牌，最多查看 10 秒；盖回后不再保留提示。
+                            </p>
+                            {initialPicking && (
+                              <button
+                                className="primary"
+                                disabled={locked || selected.length !== 2}
+                                onClick={() =>
+                                  void send({
+                                    type: "initialSelect",
+                                    indices: selected,
+                                  })
+                                }
+                              >
+                                查看选中的两张牌
+                              </button>
+                            )}
+                            {v.initial?.status === "done" && (
+                              <span className="tag">
+                                已完成 {v.initial.doneIds.length} /{" "}
+                                {v.players.length}
+                              </span>
+                            )}
+                          </>
+                        ) : !myTurn ? (
+                          <>
+                            <h2>看看牌桌，想好下一步。</h2>
+                            <p>
+                              等待{" "}
+                              {
+                                v.players.find((p) => p.id === v.turnPlayerId)
+                                  ?.name
+                              }{" "}
+                              行动。超时会自动弃牌。
+                            </p>
+                          </>
+                        ) : reveal ? (
+                          <h2>记住牌面后，盖回结束回合。</h2>
+                        ) : !v.pending ? (
+                          <>
+                            <h2>
+                              {v.caboCallerId
+                                ? "最后行动阶段，请摸牌或取弃牌堆。"
+                                : "拿一张牌，或呼唤 CABO。"}
+                            </h2>
+                            <div className="button-row">
+                              <button
+                                className="primary"
+                                disabled={locked || !acting}
+                                onClick={() =>
+                                  void perform({ type: "draw", source: "deck" })
+                                }
+                              >
+                                <Icon name="draw" />
+                                摸一张牌
+                              </button>
+                              <button
+                                className="secondary"
+                                disabled={locked || !acting || !v.discardTop}
+                                onClick={() =>
+                                  void perform({
+                                    type: "draw",
+                                    source: "discard",
+                                  })
+                                }
+                              >
+                                <Icon name="discard" />
+                                取弃牌堆
+                              </button>
+                              <button
+                                className="cabo-button"
+                                disabled={locked || !acting || !!v.caboCallerId}
+                                onClick={() => setConfirm("cabo")}
+                              >
+                                {v.caboCallerId
+                                  ? "已有玩家呼唤 CABO"
+                                  : "呼唤 CABO"}
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="pending-actions">
+                            <div className="pending" data-testid="pending-card">
+                              <img
+                                src={faceUrl(v.pending.card)}
+                                alt={`摸到 ${cardName(v.pending.card)}`}
+                              />
+                              <span>
+                                仅你可见 ·{" "}
+                                {v.pending.source === "deck"
+                                  ? "摸牌堆"
+                                  : "弃牌堆"}
+                              </span>
+                            </div>
+                            <div className="pending-controls">
+                              <h2>
+                                {mode === "swap"
+                                  ? "选择要换掉的位置"
+                                  : mode === "skill"
+                                    ? rank <= 8
+                                      ? "选择自己的一张牌"
+                                      : rank <= 10
+                                        ? "选择对手与一个位置"
+                                        : "选择两名玩家各一张牌"
+                                    : "这张牌，怎么用？"}
+                              </h2>
+                              {!mode ? (
+                                <div className="button-row">
                                   <button
                                     className="secondary"
                                     disabled={locked || !acting}
-                                    onClick={beginSkill}
+                                    onClick={() =>
+                                      void perform({ type: "discard" })
+                                    }
                                   >
-                                    使用技能
+                                    直接弃置
                                   </button>
-                                )}
-                              </div>
-                            ) : (
-                              <>
-                                {mode === "swap" ? (
-                                  <p>
-                                    已选 {selected.length}{" "}
-                                    张。多张必须同点数，否则公开并加一张。
-                                  </p>
-                                ) : (
-                                  <>
-                                    <p>
-                                      {rank <= 10
-                                        ? "查看最多 5 秒；只有你能看到。"
-                                        : "选择两名不同玩家各一张牌，序号不限；可选自己或两名对手，交换不揭示暗牌。"}
-                                    </p>
-                                    {exchanging && (
-                                      <p
-                                        data-testid="exchange-selection"
-                                        aria-live="polite"
-                                      >
-                                        已选 {exchangeCards.length}/2：
-                                        {exchangeCards.length
-                                          ? exchangeCards
-                                              .map(
-                                                (card) =>
-                                                  `${v.players.find((p) => p.id === card.playerId)?.name} · 第 ${card.index + 1} 张`,
-                                              )
-                                              .join(" ↔ ")
-                                          : "请点击牌面选择"}
-                                        。再次点击可取消。
-                                      </p>
-                                    )}
-                                    {rank >= 9 && rank <= 10 && (
-                                      <div className="target-buttons">
-                                        {v.players
-                                          .filter((p) => p.id !== v.selfId)
-                                          .map((p) => (
-                                            <button
-                                              key={p.id}
-                                              className={
-                                                target === p.id ? "active" : ""
-                                              }
-                                              disabled={locked}
-                                              onClick={() => {
-                                                setTarget(p.id);
-                                                setSkillIndex(undefined);
-                                              }}
-                                            >
-                                              {p.name}
-                                            </button>
-                                          ))}
-                                      </div>
-                                    )}
-                                  </>
-                                )}
-                                <div className="button-row">
                                   <button
                                     className="primary"
-                                    disabled={
-                                      locked ||
-                                      !acting ||
-                                      (mode === "swap"
-                                        ? selected.length === 0
-                                        : exchanging
-                                          ? exchangeCards.length !== 2
-                                          : skillIndex === undefined ||
-                                            !targetId)
-                                    }
-                                    onClick={() =>
-                                      void perform(
-                                        mode === "swap"
-                                          ? { type: "swap", indices: selected }
-                                          : exchanging
-                                            ? {
-                                                type: "exchange",
-                                                first: exchangeCards[0],
-                                                second: exchangeCards[1],
-                                              }
-                                            : {
-                                                type: "skill",
-                                                targetId: targetId!,
-                                                index: skillIndex!,
-                                              },
-                                      )
-                                    }
-                                  >
-                                    {mode === "swap" ? "确认交换" : "确认技能"}
-                                  </button>
-                                  <button
-                                    className="text-button"
-                                    disabled={locked}
+                                    disabled={locked || !acting}
                                     onClick={() => {
-                                      setMode(undefined);
+                                      setMode("swap");
                                       setSelected([]);
-                                      setSkillIndex(undefined);
-                                      setExchangeCards([]);
                                     }}
                                   >
-                                    取消
+                                    换入手牌
                                   </button>
+                                  {skillPossible && (
+                                    <button
+                                      className="secondary"
+                                      disabled={locked || !acting}
+                                      onClick={beginSkill}
+                                    >
+                                      使用技能
+                                    </button>
+                                  )}
                                 </div>
-                              </>
-                            )}
+                              ) : (
+                                <>
+                                  {mode === "swap" ? (
+                                    <p>
+                                      已选 {selected.length}{" "}
+                                      张。多张必须同点数，否则公开并加一张。
+                                    </p>
+                                  ) : (
+                                    <>
+                                      <p>
+                                        {rank <= 10
+                                          ? "查看最多 5 秒；只有你能看到。"
+                                          : "选择两名不同玩家各一张牌，序号不限；可选自己或两名对手，交换不揭示暗牌。"}
+                                      </p>
+                                      {exchanging && (
+                                        <p
+                                          data-testid="exchange-selection"
+                                          aria-live="polite"
+                                        >
+                                          已选 {exchangeCards.length}/2：
+                                          {exchangeCards.length
+                                            ? exchangeCards
+                                                .map(
+                                                  (card) =>
+                                                    `${v.players.find((p) => p.id === card.playerId)?.name} · 第 ${card.index + 1} 张`,
+                                                )
+                                                .join(" ↔ ")
+                                            : "请点击牌面选择"}
+                                          。再次点击可取消。
+                                        </p>
+                                      )}
+                                      {rank >= 9 && rank <= 10 && (
+                                        <div className="target-buttons">
+                                          {v.players
+                                            .filter((p) => p.id !== v.selfId)
+                                            .map((p) => (
+                                              <button
+                                                key={p.id}
+                                                className={
+                                                  target === p.id
+                                                    ? "active"
+                                                    : ""
+                                                }
+                                                disabled={locked}
+                                                onClick={() => {
+                                                  setTarget(p.id);
+                                                  setSkillIndex(undefined);
+                                                }}
+                                              >
+                                                {p.name}
+                                              </button>
+                                            ))}
+                                        </div>
+                                      )}
+                                    </>
+                                  )}
+                                  <div className="button-row">
+                                    <button
+                                      className="primary"
+                                      disabled={
+                                        locked ||
+                                        !acting ||
+                                        (mode === "swap"
+                                          ? selected.length === 0
+                                          : exchanging
+                                            ? exchangeCards.length !== 2
+                                            : skillIndex === undefined ||
+                                              !targetId)
+                                      }
+                                      onClick={() =>
+                                        void perform(
+                                          mode === "swap"
+                                            ? {
+                                                type: "swap",
+                                                indices: selected,
+                                              }
+                                            : exchanging
+                                              ? {
+                                                  type: "exchange",
+                                                  first: exchangeCards[0],
+                                                  second: exchangeCards[1],
+                                                }
+                                              : {
+                                                  type: "skill",
+                                                  targetId: targetId!,
+                                                  index: skillIndex!,
+                                                },
+                                        )
+                                      }
+                                    >
+                                      {mode === "swap"
+                                        ? "确认交换"
+                                        : "确认技能"}
+                                    </button>
+                                    <button
+                                      className="text-button"
+                                      disabled={locked}
+                                      onClick={() => {
+                                        setMode(undefined);
+                                        setSelected([]);
+                                        setSkillIndex(undefined);
+                                        setExchangeCards([]);
+                                      }}
+                                    >
+                                      取消
+                                    </button>
+                                  </div>
+                                </>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      )}
-                    </section>
+                        )}
+                      </section>
+                    )}
                   </div>
                 )}
                 <div className="below-table">
@@ -920,7 +964,11 @@ export function App() {
           >
             <div className="eyebrow">FOR YOUR EYES ONLY</div>
             <h2>记住位置，藏好秘密。</h2>
-            <p>仅你可见 · {seconds(reveal.deadline)} 秒后自动盖回</p>
+            <p>
+              仅你可见 ·{" "}
+              <Countdown deadline={reveal.deadline} offset={room.offset} />{" "}
+              秒后自动盖回
+            </p>
             <div className="reveal-cards">
               {reveal.cards.map((c) => (
                 <div key={`${c.playerId}-${c.index}`}>
