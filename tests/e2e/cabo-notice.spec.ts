@@ -1,3 +1,4 @@
+import { enterFirstRoom } from "../support/browser";
 import { test, expect, type Page } from "@playwright/test";
 
 async function opening(page: Page) {
@@ -40,7 +41,7 @@ for (const count of [2, 3, 4]) {
     for (const [i, p] of players.entries()) {
       await p.goto("/");
       await p.getByLabel("你的昵称").fill(names[i]);
-      await p.getByRole("button", { name: "入座", exact: true }).click();
+      await enterFirstRoom(p);
       await p.getByRole("button", { name: "准备", exact: true }).click();
     }
     await page.getByRole("button", { name: "开始游戏", exact: true }).click();

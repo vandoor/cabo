@@ -68,6 +68,7 @@ export function App() {
   const room = useRoom();
   const { view: v, connected, busy, error, send } = room;
   const [name, setName] = useState("");
+  const [roomName, setRoomName] = useState("");
   useLayoutEffect(commitOperations);
   const spectator = v?.role === "spectator";
   const [selected, setSelected] = useState<number[]>([]);
@@ -75,7 +76,9 @@ export function App() {
   const [target, setTarget] = useState("");
   const [skillIndex, setSkillIndex] = useState<number>();
   const [exchangeCards, setExchangeCards] = useState<CardPosition[]>([]);
-  const [confirm, setConfirm] = useState<"cabo" | "endGame" | undefined>();
+  const [confirm, setConfirm] = useState<
+    "cabo" | "endGame" | "closeRoom" | undefined
+  >();
   const turnActive = useDeadline(v?.turnDeadline, room.offset);
   const initialActive = useDeadline(v?.initial?.deadline, room.offset);
   const revealActive = useDeadline(v?.reveal?.deadline, room.offset);
@@ -88,7 +91,7 @@ export function App() {
           .find(
             (log) =>
               log.skill &&
-              (log.skill.kind === "spy" || log.skill.actorId !== v?.selfId),
+              (log.skill.kind !== "peek" || log.skill.actorId !== v?.selfId),
           )
       : undefined;
   const skillActive = useDeadline(
@@ -98,7 +101,7 @@ export function App() {
   const mine = v?.players.find((p) => p.id === v.selfId);
   const host = !!v && !spectator && v.hostId === v.selfId;
   const myTurn = v?.phase === "turn" && v.turnPlayerId === v.selfId;
-  const locked = !connected || busy;
+  const locked = !connected || busy || room.status !== "ready";
   const acting = myTurn && turnActive;
   const reveal = v?.reveal && revealActive && connected ? v.reveal : undefined;
   const swapFeedback =
@@ -121,7 +124,14 @@ export function App() {
     setExchangeCards([]);
     setTarget("");
     setConfirm(undefined);
-  }, [v?.phase, v?.turnPlayerId, v?.round, !!v?.pending]);
+  }, [
+    v?.roomId,
+    v?.generation,
+    v?.phase,
+    v?.turnPlayerId,
+    v?.round,
+    !!v?.pending,
+  ]);
   useEffect(() => {
     if (v?.initial?.status === "selecting")
       // Two cards are an unconfirmed local draft. Partial selections must
@@ -279,20 +289,37 @@ export function App() {
           }
           skillMessage={
             skillNotice?.skill
-              ? skillNotice.skill.kind === "spy"
+              ? skillNotice.skill.kind !== "peek"
                 ? skillNotice.text
-                : `${v?.players.find((p) => p.id === skillNotice.skill!.actorId)?.name} 发动了${{ peek: "偷看", exchange: "交换" }[skillNotice.skill.kind]}技能`
+                : `${v?.players.find((p) => p.id === skillNotice.skill!.actorId)?.name} 发动了${{ peek: "偷看" }[skillNotice.skill.kind]}技能`
               : undefined
           }
         />
       )}
       <header className="topbar">
-        <a className="brand" href="/" aria-label="CABO 首页">
+        <a
+          className="brand"
+          href="/"
+          aria-label="CABO 首页"
+          onClick={(e) => {
+            e.preventDefault();
+            room.browse();
+          }}
+        >
           CABO<span>林间牌桌</span>
         </a>
         <div className={`connection ${connected ? "online" : ""}`}>
           <span className="status-dot" />
-          {connected ? "已连接" : "连接中"}
+          {
+            {
+              connecting: "连接中",
+              restoring: "正在恢复",
+              ready: "已连接",
+              retrying: "重试中",
+              invalid: "席位失效",
+              takenOver: "已被接管",
+            }[room.status]
+          }
           <span className="desktop-only"> · 局域网房间</span>
         </div>
       </header>
@@ -318,38 +345,102 @@ export function App() {
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                void room.join(name);
+                room.create(name, roomName);
               }}
               className="join-form"
             >
               <label htmlFor="nickname">你的昵称</label>
-              <div>
-                <input
-                  id="nickname"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  maxLength={24}
-                  placeholder="大家怎么称呼你？"
-                  autoComplete="off"
-                  required
-                />
-                <button
-                  className="primary"
-                  disabled={busy || !name.trim()}
-                  type="submit"
-                >
-                  入座
-                </button>
-              </div>
-              <small>2–4 人 · 手机 / 电脑 · 无需注册</small>
+              <input
+                id="nickname"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                maxLength={24}
+                placeholder="大家怎么称呼你？"
+                autoComplete="off"
+                required
+              />
+              <label htmlFor="room-name">房间名称（可选）</label>
+              <input
+                id="room-name"
+                value={roomName}
+                onChange={(e) => setRoomName(e.target.value)}
+                maxLength={24}
+                placeholder="默认使用房间号"
+              />
+              <button
+                className="primary"
+                disabled={
+                  busy ||
+                  !connected ||
+                  !name.trim() ||
+                  room.rooms.length >= 4 ||
+                  !!room.myRoomId
+                }
+                type="submit"
+              >
+                创建房间
+              </button>
+              <small>最多 4 个房间 · 每房间 2–4 人</small>
             </form>
-            <button
-              className="secondary"
-              disabled={busy || !connected}
-              onClick={() => void room.watch()}
-            >
-              观战
-            </button>
+            {room.myRoomId && (
+              <button
+                className="primary"
+                disabled={busy || !connected}
+                onClick={room.resume}
+              >
+                返回我的牌局
+              </button>
+            )}
+            <div className="room-list" aria-label="房间列表">
+              {!room.rooms.length && <p>还没有房间，创建一间邀请朋友吧。</p>}
+              {room.rooms.map((r) => (
+                <article
+                  className="room-summary"
+                  key={r.roomId}
+                  data-testid="room-summary"
+                >
+                  <h2>{r.name}</h2>
+                  <p>
+                    房间号 {r.roomId} · 房主 {r.hostName}
+                  </p>
+                  <p>
+                    {r.playerCount}/4 人 ·{" "}
+                    {
+                      {
+                        lobby: "等待开始",
+                        initial: "开局查看",
+                        turn: "进行中",
+                        roundEnd: "本轮结算",
+                        gameOver: "本场结束",
+                      }[r.phase]
+                    }{" "}
+                    · {r.spectatorCount} 人观战
+                  </p>
+                  <div className="button-row">
+                    <button
+                      className="primary"
+                      disabled={
+                        busy ||
+                        !connected ||
+                        !name.trim() ||
+                        !r.joinable ||
+                        !!room.myRoomId
+                      }
+                      onClick={() => room.join(r.roomId, name)}
+                    >
+                      加入
+                    </button>
+                    <button
+                      className="secondary"
+                      disabled={busy || !connected}
+                      onClick={() => room.watch(r.roomId)}
+                    >
+                      观战
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
           </section>
         ) : (
           <>
@@ -361,8 +452,27 @@ export function App() {
                     : `ROUND ${String(v.round).padStart(2, "0")}`}
                 </div>
                 <h1>{phaseLabel}</h1>
+                <p className="room-label">房间 {v.roomId}</p>
               </div>
               <div className="table-meta">
+                {!spectator && (
+                  <button
+                    className="secondary"
+                    disabled={busy}
+                    onClick={room.browse}
+                  >
+                    返回房间列表
+                  </button>
+                )}
+                {host && (
+                  <button
+                    className="text-button danger"
+                    disabled={locked}
+                    onClick={() => setConfirm("closeRoom")}
+                  >
+                    关闭房间
+                  </button>
+                )}
                 <strong className="deck-count" data-testid="deck-count">
                   摸牌堆剩余 {v.deckCount} 张
                 </strong>
@@ -963,15 +1073,43 @@ export function App() {
             )}
           </>
         )}
+        {room.notice && (
+          <p role="status" className="error">
+            {room.notice}
+          </p>
+        )}
+        {!room.storageAvailable && (
+          <p role="status" className="error">
+            浏览器存储不可用，无法安全保留席位。允许本站存储后才能入座；仍可观战。
+          </p>
+        )}
         {error && (
           <div role="alert" className="error">
             {error}
           </div>
         )}
-        {!connected && v && (
+        {room.status !== "ready" && (
           <div className="disconnect-banner" role="status">
-            连接已断开，计时仍继续。
-            <button onClick={room.reconnect}>重新连接</button>
+            {connected
+              ? "身份恢复完成后才能操作。"
+              : "连接已断开，计时仍继续。"}
+            <button
+              onClick={
+                room.status === "takenOver" ? room.takeover : room.reconnect
+              }
+            >
+              {room.status === "takenOver" ? "主动接管" : "重新连接"}
+            </button>
+            <button onClick={room.browse}>返回列表</button>
+            {new URLSearchParams(location.search).get("room") && (
+              <button
+                onClick={() =>
+                  room.watch(new URLSearchParams(location.search).get("room")!)
+                }
+              >
+                观战此房间
+              </button>
+            )}
           </div>
         )}
         <Rules />
@@ -1025,15 +1163,27 @@ export function App() {
             className="modal"
             role="dialog"
             aria-modal="true"
-            aria-label={confirm === "cabo" ? "确认 CABO" : "确认结束游戏"}
+            aria-label={
+              confirm === "cabo"
+                ? "确认 CABO"
+                : confirm === "closeRoom"
+                  ? "确认关闭房间"
+                  : "确认结束游戏"
+            }
           >
             <h2>
-              {confirm === "cabo" ? "准备好呼唤 CABO？" : "结束这一场游戏？"}
+              {confirm === "cabo"
+                ? "准备好呼唤 CABO？"
+                : confirm === "closeRoom"
+                  ? "关闭这个房间？"
+                  : "结束这一场游戏？"}
             </h2>
             <p>
               {confirm === "cabo"
                 ? "这会占用你的整个回合。其他玩家各行动一次后结算；并列最低得 0，否则你的牌分加 10。"
-                : "当前手牌和本场积分将清空，所有玩家返回大厅。"}
+                : confirm === "closeRoom"
+                  ? "房间将关闭，全部席位、手牌和积分清空，所有人返回列表。"
+                  : "当前手牌和本场积分将清空，所有玩家返回大厅。"}
             </p>
             <div className="button-row">
               <button
@@ -1047,14 +1197,20 @@ export function App() {
                 className="primary"
                 disabled={locked}
                 onClick={() =>
-                  void perform(
-                    confirm === "cabo"
-                      ? { type: "cabo" }
-                      : { type: "endGame", confirm: true },
-                  )
+                  confirm === "closeRoom"
+                    ? (room.close(), setConfirm(undefined))
+                    : void perform(
+                        confirm === "cabo"
+                          ? { type: "cabo" }
+                          : { type: "endGame", confirm: true },
+                      )
                 }
               >
-                {confirm === "cabo" ? "确认呼唤 CABO" : "确认结束并返回大厅"}
+                {confirm === "cabo"
+                  ? "确认呼唤 CABO"
+                  : confirm === "closeRoom"
+                    ? "确认关闭房间"
+                    : "确认结束并返回大厅"}
               </button>
             </div>
           </section>

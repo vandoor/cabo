@@ -1303,3 +1303,70 @@ html {
   max-width: 180px;
   overflow-wrap: anywhere;
 }
+
+.room-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 16px;
+  width: 100%;
+  margin-top: 24px;
+  text-align: left;
+}
+.room-summary {
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--line, #416457);
+  border-radius: 16px;
+  background: #153d33;
+  overflow-wrap: anywhere;
+}
+.room-summary h2 {
+  margin: 0 0 12px;
+}
+.room-summary p {
+  font-size: 14px;
+  line-height: 1.7;
+}
+.room-label {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.join-form {
+  display: grid;
+  gap: 10px;
+}
+.join-form input {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+.table-meta {
+  flex-wrap: wrap;
+}
+.skill-notice {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+@media (max-width: 420px) {
+  .position {
+    font-size: 14px;
+  }
+  .public-draw {
+    flex-wrap: wrap;
+    max-width: 100%;
+  }
+  .public-draw span {
+    overflow-wrap: anywhere;
+    min-width: 0;
+  }
+  .table-meta {
+    justify-content: flex-start;
+  }
+  .room-summary {
+    padding: 14px;
+  }
+  .disconnect-banner {
+    flex-wrap: wrap;
+    overflow-wrap: anywhere;
+  }
+}

@@ -823,6 +823,16 @@ describe("public skill announcements", () => {
         );
         if (kind === "spy")
           expect(notice!.skill).toMatchObject({ targetId: other, index: 0 });
+        if (kind === "exchange") {
+          const actorName = g.state.players.find((p) => p.id === actor)!.name;
+          const otherName = g.state.players.find((p) => p.id === other)!.name;
+          expect(notice!.text).toBe(
+            `${actorName}发动了交换技能：${actorName}第 1 张 ↔ ${otherName}第 3 张。`,
+          );
+          expect(g.spectatorView(11).logs.find((l) => l.skill)?.text).toBe(
+            notice!.text,
+          );
+        }
         if (player.id !== actor)
           expect(g.view(player.id, 11).reveal).toBeUndefined();
       }

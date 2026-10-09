@@ -1,3 +1,4 @@
+import { enterFirstRoom } from "../support/browser";
 import { test, expect, type Page, type Browser } from "@playwright/test";
 test.beforeEach(async ({ request }) => {
   await request.post("/__test/reset");
@@ -5,7 +6,7 @@ test.beforeEach(async ({ request }) => {
 async function join(page: Page, name: string) {
   await page.goto("/");
   await page.getByLabel("你的昵称").fill(name);
-  await page.getByRole("button", { name: "入座" }).click();
+  await enterFirstRoom(page);
   await expect(
     page.getByRole("button", { name: "准备", exact: true }),
   ).toBeVisible();

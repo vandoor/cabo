@@ -17,9 +17,10 @@ export function mark(op: Operation, phase: string, result = op.result) {
   };
   queueMicrotask(() => console.info("[cabo-timing] " + JSON.stringify(row)));
 }
-export function startOperation(step: string): Operation {
+export function startOperation(step: string, requestId?: string): Operation {
   const op = {
     requestId:
+      requestId ??
       globalThis.crypto?.randomUUID?.() ??
       `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
     step,

@@ -1,9 +1,10 @@
+import { enterFirstRoom } from "../support/browser";
 import { test, expect, type Page } from "@playwright/test";
 
 async function join(page: Page, name: string) {
   await page.goto("/");
   await page.getByLabel("你的昵称").fill(name);
-  await page.getByRole("button", { name: "入座", exact: true }).click();
+  await enterFirstRoom(page);
   await page.getByRole("button", { name: "准备", exact: true }).click();
 }
 async function opening(page: Page) {
@@ -101,15 +102,15 @@ test("J/Q selects two opponents at independent positions and announces the skill
     fullPage: true,
   });
   await confirm.click();
-  for (const p of [other, third])
+  for (const p of [page, other, third])
     await expect(p.getByTestId("skill-notice")).toHaveText(
-      "小鹿 发动了交换技能",
+      "小鹿发动了交换技能：小熊第 2 张 ↔ 小狐第 4 张。",
     );
-  await expect(page.getByTestId("skill-notice")).toHaveCount(0);
+
   await expect(page.getByTestId("pending-card")).toHaveCount(0);
   await expect(page.getByTestId("exchange-selection")).toHaveCount(0);
   await expect(page.locator("body")).toContainText(
-    "小鹿 交换了 小熊 的第 2 张牌和 小狐 的第 4 张牌",
+    "小鹿发动了交换技能：小熊第 2 张 ↔ 小狐第 4 张。",
   );
   for (const p of [page, other, third]) {
     await expect(p.getByRole("dialog", { name: "私密查看" })).toHaveCount(0);
@@ -164,13 +165,15 @@ test("skill announcement survives immediate round settlement", async ({
     other.getByRole("heading", { name: "本轮结算", level: 1 }),
   ).toBeVisible();
   await expect(other.getByTestId("skill-notice")).toHaveText(
-    "小鹿 发动了交换技能",
+    "小鹿发动了交换技能：小鹿第 1 张 ↔ 小熊第 3 张。",
   );
   await other.screenshot({
     path: `artifacts/skill-notice-${test.info().project.name}.png`,
     fullPage: true,
   });
-  await expect(page.getByTestId("skill-notice")).toHaveCount(0);
+  await expect(page.getByTestId("skill-notice")).toHaveText(
+    "小鹿发动了交换技能：小鹿第 1 张 ↔ 小熊第 3 张。",
+  );
   await expect(other.getByTestId("skill-notice")).toHaveCount(0, {
     timeout: 6000,
   });

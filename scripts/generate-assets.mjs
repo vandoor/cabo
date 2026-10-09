@@ -9,8 +9,7 @@ for (const [suit, symbol] of Object.entries(symbols))
   for (let rank = 1; rank <= 13; rank++) {
     const color = ["hearts", "diamonds"].includes(suit) ? "#b93642" : "#18332c";
     const label = { 1: "A", 11: "J", 12: "Q", 13: "K" }[rank] ?? rank;
-    const corner = `<text x="12" y="28" font-size="23" font-weight="700">${label}</text><text x="13" y="48" font-size="20">${symbol}</text>`;
-    const body = `<g fill="${color}" font-family="Georgia,serif">${corner}<g transform="rotate(180 70 98)">${corner}</g><text x="70" y="116" text-anchor="middle" font-size="62">${symbol}</text>${rank > 10 ? `<text x="70" y="153" text-anchor="middle" font-size="23">${label}</text>` : ""}</g>`;
+    const body = `<g fill="${color}" font-family="Arial,sans-serif" text-anchor="middle"><text x="25" y="36" font-size="28">${symbol}</text><text x="115" y="181" font-size="28">${symbol}</text><text x="70" y="127" font-size="82" font-weight="800" letter-spacing="-4">${label}</text><text x="70" y="164" font-size="28">${symbol}</text></g>`;
     await writeFile(new URL(`cards/${suit}-${rank}.svg`, base), shell(body));
   }
 for (const [suit, color, label] of [
@@ -20,7 +19,7 @@ for (const [suit, color, label] of [
   await writeFile(
     new URL(`cards/${suit}-0.svg`, base),
     shell(
-      `<g fill="${color}" text-anchor="middle" font-family="sans-serif"><text x="70" y="32" font-size="15" letter-spacing="2">JOKER</text><path d="M35 85L43 126H97L105 85L83 99L70 69L57 99Z"/><circle cx="35" cy="81" r="5"/><circle cx="70" cy="64" r="5"/><circle cx="105" cy="81" r="5"/><text x="70" y="153" font-size="19">${label}</text><text x="70" y="181" font-size="17">0</text></g>`,
+      `<g fill="${color}" text-anchor="middle" font-family="Arial,sans-serif"><text x="70" y="32" font-size="14" letter-spacing="2">JOKER</text><text x="70" y="127" font-size="84" font-weight="800">0</text><text x="70" y="167" font-size="22">${label}</text></g>`,
     ),
   );
 }

@@ -25,7 +25,7 @@ export type GameCommand =
   | { type: "skill"; targetId: string; index: number }
   | { type: "exchange"; first: CardPosition; second: CardPosition }
   | { type: "cabo" };
-export interface CommandEnvelope {
+export interface CommandEnvelope extends RoomScope {
   requestId: string;
   version: number;
   command: GameCommand;
@@ -129,4 +129,62 @@ export interface WatchAck {
   ok: boolean;
   error?: RuleErrorInfo;
   view?: SpectatorView;
+}
+
+/** Network scope is outside the pure game engine's views. */
+export interface RoomScope {
+  roomId: string;
+  serverId: string;
+  generation: number;
+}
+export type ScopedRoomView = RoomView & RoomScope;
+export interface RoomSummary {
+  roomId: string;
+  name: string;
+  phase: Phase;
+  playerCount: number;
+  onlineCount: number;
+  spectatorCount: number;
+  hostName: string;
+  joinable: boolean;
+}
+export interface BrowserIdentity {
+  browserId: string;
+  secret: string;
+}
+export interface BrowserSession {
+  browserId: string;
+  generation: number;
+  roomId?: string;
+  playerId?: string;
+  token?: string;
+  connected: boolean;
+}
+export interface ManagementEnvelope extends BrowserIdentity {
+  requestId: string;
+  serverId: string;
+  generation: number;
+}
+export interface ManagementReceipt {
+  requestId: string;
+  event: string;
+  roomId?: string;
+  generation: number;
+}
+export interface ManagementAck {
+  receipt?: ManagementReceipt;
+  ok: boolean;
+  serverId: string;
+  error?: RuleErrorInfo;
+  session?: BrowserSession;
+  rooms?: RoomSummary[];
+  view?: ScopedRoomView;
+}
+export interface RoomsUpdate {
+  serverId: string;
+  generation: number;
+  rooms: RoomSummary[];
+}
+export interface RoomNotification extends RoomScope {
+  reason: string;
 }

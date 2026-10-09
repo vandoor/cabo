@@ -1,3 +1,4 @@
+import { protocolHarness } from "../../../tests/support/protocol.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { io, type Socket } from "socket.io-client";
 import { createRoomServer } from "./server.js";
@@ -12,6 +13,7 @@ afterEach(async () => {
   for (const fn of cleanup.splice(0).reverse()) await fn();
 });
 async function fixture(count = 2) {
+  const protocol = protocolHarness();
   let now = 1000;
   const clock = vi.fn(() => now);
   const app = createRoomServer({
@@ -32,6 +34,7 @@ async function fixture(count = 2) {
       socket.disconnect();
     });
     await new Promise<void>((r) => socket.on("connect", r));
+    protocol.attach(socket);
     const joined = await socket.emitWithAck("join", { name, token });
     return {
       socket,
@@ -68,7 +71,7 @@ async function fixture(count = 2) {
   async function turns() {
     await start();
     now += 40001;
-    app.room.tick();
+    app.manager.tick();
   }
   return {
     app,
@@ -81,7 +84,7 @@ async function fixture(count = 2) {
     clock,
     advance: (n: number) => {
       now += n;
-      app.room.tick();
+      app.manager.tick();
     },
   };
 }
@@ -330,15 +333,14 @@ describe("real Socket.IO room", () => {
       f.clients[1].view.selfId,
     );
   });
-  it("clears an entirely offline lobby after 60 seconds and invalidates tokens", async () => {
+  it("clears an entirely offline lobby after five minutes and invalidates tokens", async () => {
     const f = await fixture();
     for (const c of f.clients) c.socket.disconnect();
     await new Promise((r) => setTimeout(r, 20));
-    f.advance(60001);
+    f.advance(300001);
     const stale = await f.connect("", f.clients[0].token);
     expect(stale.joined.ok).toBe(false);
-    const fresh = await f.connect("新房主");
-    expect(fresh.view.players).toHaveLength(1);
+    expect(f.app.manager.rooms.size).toBe(0);
   });
   it("only lets the host end the match with explicit confirmation; leave and kick revoke seats", async () => {
     const f = await fixture();

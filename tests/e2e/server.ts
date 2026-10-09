@@ -1,7 +1,8 @@
 // Deterministic fixtures exist only in this test launcher, never in production.
-import { Room } from "../../apps/server/src/room.js";
 import { createRoomServer } from "../../apps/server/src/server.js";
-const app = createRoomServer({ random: () => 0.31, tickInterval: 0 });
+let clockOffset = 0;
+const now = () => Date.now() + clockOffset;
+const app = createRoomServer({ random: () => 0.31, tickInterval: 0, now });
 let rejectPartial = false;
 function installFault() {
   app.io.on("connection", (socket) =>
@@ -26,7 +27,7 @@ app.app.post("/__test/reject-partial", (_req, res) => {
   rejectPartial = true;
   res.json({ ok: true });
 });
-setInterval(() => app.room.tick(), 100);
+setInterval(() => app.manager.tick(), 100);
 // Drop transports without revoking seats so clients exercise automatic reconnect.
 app.app.post("/__test/drop-connections", (_req, res) => {
   for (const socket of app.io.sockets.sockets.values()) socket.conn.close();
@@ -39,10 +40,9 @@ app.app.post("/__test/drop-watchers", (_req, res) => {
 });
 app.app.post("/__test/reset", (_req, res) => {
   app.io.disconnectSockets(true);
-  app.io.removeAllListeners("connection");
-  app.room = new Room(app.io, { random: () => 0.31 });
+  app.manager.rooms.clear();
   rejectPartial = false;
-  installFault();
+  clockOffset = 0;
   res.json({ ok: true });
 });
 app.app.post("/__test/skill", (req, res) => {
@@ -93,7 +93,25 @@ app.app.post("/__test/cabo-failed", (_req, res) => {
     for (const hand of player.hand) hand.card = pool.shift()!;
   }
   for (const hand of s.players[s.turnIndex].hand) hand.card = pool.pop()!;
+  // Avoid QQKK, which correctly overrides a failed CABO call.
+  const caller = s.players[s.turnIndex];
+  if (
+    caller.hand.length === 4 &&
+    caller.hand.filter((h) => h.card.rank === 12).length === 2 &&
+    caller.hand.filter((h) => h.card.rank === 13).length === 2
+  ) {
+    const index = pool.findIndex((c) => c.rank === 11);
+    [caller.hand[0].card, pool[index]] = [pool[index], caller.hand[0].card];
+  }
   s.deck = pool;
   res.json({ ok: true });
 });
 app.http.listen(3100, "127.0.0.1");
+app.app.post("/__test/finish-offline", (_req, res) => {
+  const room = app.room;
+  for (let i = 0; i < 4 && room.engine?.state.phase === "turn"; i++) {
+    clockOffset += Math.max(0, room.engine.state.turnDeadline! - now());
+    app.manager.tick(now());
+  }
+  res.json({ ok: true });
+});

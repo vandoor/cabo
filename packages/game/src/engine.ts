@@ -507,7 +507,7 @@ export class GameEngine {
           delete player.swapFeedback;
       s.discard.push(s.pending.card);
       this.log(
-        `${p.name} 交换了 ${first.name} 的第 ${command.first.index + 1} 张牌和 ${second.name} 的第 ${command.second.index + 1} 张牌`,
+        `${p.name}发动了交换技能：${first.name}第 ${command.first.index + 1} 张 ↔ ${second.name}第 ${command.second.index + 1} 张。`,
         now,
         { actorId: p.id, kind: "exchange" },
       );

@@ -1,3 +1,4 @@
+import { protocolHarness } from "../../../tests/support/protocol.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { io, type Socket } from "socket.io-client";
 import { createRoomServer } from "./server.js";
@@ -9,6 +10,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 async function fixture() {
+  const protocol = protocolHarness();
   let now = 1000;
   const app = createRoomServer({
     now: () => now,
@@ -30,7 +32,7 @@ async function fixture() {
       socket.disconnect();
     });
     await new Promise<void>((resolve) => socket.once("connect", resolve));
-    return socket;
+    return protocol.attach(socket);
   };
   let seq = 0;
   const command = async (socket: Socket, command: GameCommand) => {
@@ -78,8 +80,6 @@ function publicOnly(view: Record<string, any>) {
 }
 it("watches without taking seats or affecting readiness, host, and commands", async () => {
   const f = await fixture();
-  const watcher = await f.watch();
-  expect(watcher.view.players).toHaveLength(0);
   const players: Socket[] = [];
   for (let i = 0; i < 4; i++) {
     const player = await f.connect();
@@ -91,16 +91,16 @@ it("watches without taking seats or affecting readiness, host, and commands", as
       true,
     );
   }
+  const watcher = await f.watch();
   const before = (await watcher.socket.emitWithAck("sync")).view;
   expect(before.players).toHaveLength(4);
   expect(
     (await watcher.socket.emitWithAck("join", { name: "旁观" })).error.code,
-  ).toBe("SPECTATOR");
+  ).toBe("FULL");
   expect(
     (await f.command(watcher.socket, { type: "endGame", confirm: true })).error
       .code,
   ).toBe("SPECTATOR");
-  expect((await players[0].emitWithAck("watch", {})).error.code).toBe("JOINED");
   expect((await f.command(players[0], { type: "start" })).ok).toBe(true);
   const state = (await watcher.socket.emitWithAck("sync")).view;
   expect(state.hostId).toBe(before.hostId);
@@ -150,7 +150,7 @@ it("serializes only public state during private actions and resubscribes after r
   );
   expect(
     (await restored.socket.emitWithAck("join", { name: "转换" })).error.code,
-  ).toBe("SPECTATOR");
+  ).toBe("STARTED");
   await f.command(players[0], { type: "endGame", confirm: true });
   state = (await (await f.watch()).socket.emitWithAck("sync")).view;
   expect(state.phase).toBe("lobby");
@@ -187,13 +187,13 @@ it("logs safe asynchronous timings for success, rejection, malformed requests an
     .filter(([prefix]) => prefix === "[cabo-timing]")
     .map(([, json]) => JSON.parse(json));
   for (const step of [
-    "join",
+    "create",
     "ready",
     "command",
     "watch",
     "start",
     "sync",
-    "unwatch",
+    "browse",
   ])
     expect(entries.some((entry) => entry.step === step)).toBe(true);
   expect(
