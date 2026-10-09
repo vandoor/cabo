@@ -80,3 +80,7 @@ tests/e2e/          Chromium / WebKit × 手机 / 桌面
 `npm run assets` 可重新生成素材。保留完整 54 张素材，游戏只采用上述 52 张。
 
 详见 [已批准方案](docs/PLAN.md)、[协议与隐私](docs/PROTOCOL.md)、[WSL 局域网排查](docs/WSL.md)。
+
+## 版本归档
+
+已部署版本通过 `release/YYYY-MM-DD-<短提交号>` 附注标签归档到 Git 远端，保留源码历史；后续版本沿用此约定，已发布标签不覆盖。版本清单、源码导出与恢复边界见 [版本归档](docs/RELEASES.md)。
